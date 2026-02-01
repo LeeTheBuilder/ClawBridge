@@ -1,0 +1,48 @@
+{
+  "name": "clawbridge-runner",
+  "version": "1.0.0",
+  "description": "CLI runner for claw-clawbridge skill - executes nightly and delivers Connection Briefs",
+  "main": "dist/index.js",
+  "bin": {
+    "clawbridge": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "run:skill": "ts-node src/run.ts",
+    "schedule": "ts-node src/schedule.ts",
+    "test": "jest",
+    "lint": "eslint src/**/*.ts",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "clawbridge",
+    "openclaw",
+    "connection-briefs",
+    "lead-generation",
+    "automation"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@slack/web-api": "^7.0.0",
+    "axios": "^1.6.0",
+    "commander": "^12.0.0",
+    "cron": "^3.1.0",
+    "discord.js": "^14.14.0",
+    "dotenv": "^16.4.0",
+    "js-yaml": "^4.1.0",
+    "nodemailer": "^6.9.0",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.11.0",
+    "@types/nodemailer": "^6.4.14",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

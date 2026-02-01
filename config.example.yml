@@ -1,0 +1,94 @@
+# Clawbridge Runner Configuration
+# Copy this file to config.yml and customize for your workspace
+
+# Required: Your workspace ID from clawbridge.dev
+workspace_id: "ws_your_workspace_id"
+
+# Required: Project profile - describes what you offer and what you're looking for
+project_profile:
+  # What your company/agency offers
+  offer: "We help B2B SaaS companies automate their content operations"
+  
+  # What you're looking for (partners, clients, co-marketing, advisors)
+  ask: "Marketing partners, agency relationships, content-focused companies"
+  
+  # Description of your ideal target persona(s)
+  ideal_persona: "VP Marketing or Head of Content at Series A-C startups"
+  
+  # 3-8 industry keywords for targeting
+  verticals:
+    - "B2B SaaS"
+    - "content marketing"
+    - "marketing automation"
+    - "growth marketing"
+  
+  # Optional: Geographic/timezone preferences
+  geo_timezone: "US/Pacific"
+  
+  # Optional: Do-not-contact list
+  disallowed:
+    - "competitor@example.com"
+    - "@spam_account"
+  
+  # Optional: Tone guidance for message drafts
+  tone: "friendly, professional"
+
+# Optional: Search constraints
+constraints:
+  no_spam_rules:
+    - "No cold outreach to competitors"
+    - "Respect unsubscribe requests"
+  regions:
+    - "US"
+    - "EU"
+  avoid_list:
+    - "@known_spammer"
+
+# Optional: Limit resource usage per run
+run_budget:
+  max_searches: 20
+  max_fetches: 50
+  max_minutes: 10
+
+# Required: Delivery configuration
+delivery:
+  # Options: discord, slack, email
+  target: "discord"
+  
+  # Discord configuration
+  discord:
+    # Option 1: Webhook URL (recommended, simpler)
+    # Set DISCORD_WEBHOOK_URL environment variable instead of putting it here
+    # webhook_url: "https://discord.com/api/webhooks/..."
+    
+    # Option 2: Bot token + channel
+    # Set DISCORD_BOT_TOKEN environment variable
+    channel_id: "YOUR_DISCORD_CHANNEL_ID"
+  
+  # Slack configuration (if target: slack)
+  # slack:
+  #   webhook_url: ""  # Set SLACK_WEBHOOK_URL env var
+  #   # OR
+  #   bot_token: ""    # Set SLACK_BOT_TOKEN env var
+  #   channel: "#clawbridge-alerts"
+  
+  # Email configuration (if target: email)
+  # email:
+  #   smtp_host: "smtp.gmail.com"
+  #   smtp_port: 587
+  #   smtp_user: "your@gmail.com"
+  #   smtp_pass: ""  # Set SMTP_PASSWORD env var
+  #   from: "Clawbridge <noreply@yourdomain.com>"
+  #   to:
+  #     - "team@example.com"
+
+# Optional: Vault integration (upload runs to clawbridge.dev)
+vault:
+  enabled: false
+  api_url: "https://clawbridge.dev/api"
+  # workspace_token is read from CLAWBRIDGE_WORKSPACE_TOKEN env var
+
+# Optional: Output settings
+output:
+  dir: "./output"
+  keep_runs: 30  # Keep last N runs, delete older ones
