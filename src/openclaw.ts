@@ -23,6 +23,7 @@ export interface DiscoveryResult {
     searches_performed: number;
     pages_fetched: number;
     candidates_evaluated: number;
+    completed?: boolean;
   };
   source: 'openclaw' | 'clawdbot' | 'simulated';
 }
@@ -90,6 +91,9 @@ function extractJsonFromResponse(text: string): any | null {
  * Execute discovery via OpenClaw CLI (local)
  */
 async function executeViaOpenClaw(job: DiscoveryJob, timeoutMs: number): Promise<DiscoveryResult | null> {
+  let stdout = '';
+  let stderr = '';
+  
   try {
     // Get the default agent
     const agent = await getDefaultAgent('openclaw');
@@ -98,7 +102,15 @@ async function executeViaOpenClaw(job: DiscoveryJob, timeoutMs: number): Promise
       return null;
     }
     
-    logger.info('Invoking OpenClaw agent', { agent });
+    // Calculate CLI timeout (slightly less than our timeout to allow for cleanup)
+    const cliTimeoutSeconds = Math.max(30, Math.floor(job.timeoutSeconds * 0.9));
+    
+    logger.info('Invoking OpenClaw agent', { 
+      agent, 
+      timeoutSeconds: cliTimeoutSeconds,
+      maxSearches: job.maxSearches,
+      maxFetches: job.maxFetches,
+    });
     
     // Build the message - combine system and user prompts
     // Ask for JSON output explicitly
@@ -111,70 +123,103 @@ async function executeViaOpenClaw(job: DiscoveryJob, timeoutMs: number): Promise
       .replace(/\$/g, '\\$')
       .replace(/`/g, '\\`');
     
-    // Use openclaw agent with --local (runs embedded, requires model API keys in env)
-    // and --json for structured output
-    const { stdout, stderr } = await execAsync(
-      `openclaw agent --local --json --agent ${agent} -m "${escapedMessage}"`,
+    // Use openclaw agent with --local and --timeout
+    const result = await execAsync(
+      `openclaw agent --local --json --timeout ${cliTimeoutSeconds} --agent ${agent} -m "${escapedMessage}"`,
       { 
         timeout: timeoutMs,
         maxBuffer: 10 * 1024 * 1024, // 10MB buffer for large outputs
       }
     );
     
+    stdout = result.stdout;
+    stderr = result.stderr;
+    
     if (stderr) {
       logger.debug('OpenClaw stderr', { stderr: stderr.substring(0, 500) });
     }
     
-    // Parse the CLI JSON output
-    let cliResponse: any;
-    try {
-      cliResponse = JSON.parse(stdout);
-    } catch (e) {
-      logger.debug('Failed to parse OpenClaw CLI output as JSON');
-      return null;
-    }
-    
-    // Extract the agent's text response
-    const agentText = cliResponse.payloads?.[0]?.text || '';
-    logger.debug('OpenClaw agent response', { text: agentText.substring(0, 500) });
-    
-    // Try to extract JSON from the agent's response
-    const discoveryData = extractJsonFromResponse(agentText);
-    
-    if (!discoveryData || !discoveryData.candidates || discoveryData.candidates.length === 0) {
-      logger.debug('OpenClaw response did not contain valid candidates');
-      return null;
-    }
-    
-    return {
-      candidates: discoveryData.candidates,
-      summary: discoveryData.summary || { 
-        headline: `Found ${discoveryData.candidates.length} candidates via OpenClaw`, 
-        key_insights: [], 
-        venues_searched: [] 
-      },
-      metadata: discoveryData.metadata || { 
-        searches_performed: 0, 
-        pages_fetched: 0, 
-        candidates_evaluated: discoveryData.candidates.length 
-      },
-      source: 'openclaw',
-    };
+    return parseOpenClawResponse(stdout, 'openclaw');
     
   } catch (error: any) {
+    // Check if we got partial output before timeout
+    const partialStdout = error.stdout || stdout;
+    const partialStderr = error.stderr || stderr;
+    
+    const isTimeout = error.killed || error.message?.includes('TIMEOUT') || error.signal === 'SIGTERM';
+    
+    if (isTimeout && partialStdout) {
+      logger.warn('OpenClaw timed out, checking for partial results');
+      const partialResult = parseOpenClawResponse(partialStdout, 'openclaw');
+      if (partialResult && partialResult.candidates.length > 0) {
+        logger.info('Recovered partial results from timeout', { 
+          candidates: partialResult.candidates.length 
+        });
+        // Mark as incomplete
+        partialResult.metadata.completed = false;
+        return partialResult;
+      }
+    }
+    
     logger.debug('OpenClaw execution failed', { 
       error: error.message,
-      stderr: error.stderr?.substring(0, 1000),
-      stdout: error.stdout?.substring(0, 500),
+      isTimeout,
+      stderr: partialStderr?.substring(0, 1000),
+      stdout: partialStdout?.substring(0, 500),
     });
     return null;
   }
 }
 
 /**
+ * Parse OpenClaw/Clawdbot CLI response
+ */
+function parseOpenClawResponse(stdout: string, source: 'openclaw' | 'clawdbot'): DiscoveryResult | null {
+  // Parse the CLI JSON output
+  let cliResponse: any;
+  try {
+    cliResponse = JSON.parse(stdout);
+  } catch (e) {
+    logger.debug(`Failed to parse ${source} CLI output as JSON`);
+    return null;
+  }
+  
+  // Extract the agent's text response
+  const agentText = cliResponse.payloads?.[0]?.text || '';
+  logger.debug(`${source} agent response`, { text: agentText.substring(0, 500) });
+  
+  // Try to extract JSON from the agent's response
+  const discoveryData = extractJsonFromResponse(agentText);
+  
+  if (!discoveryData || !discoveryData.candidates || discoveryData.candidates.length === 0) {
+    logger.debug(`${source} response did not contain valid candidates`);
+    return null;
+  }
+  
+  return {
+    candidates: discoveryData.candidates,
+    summary: discoveryData.summary || { 
+      headline: `Found ${discoveryData.candidates.length} candidates via ${source}`, 
+      key_insights: [], 
+      venues_searched: [] 
+    },
+    metadata: {
+      searches_performed: discoveryData.metadata?.searches_performed || 0, 
+      pages_fetched: discoveryData.metadata?.pages_fetched || 0, 
+      candidates_evaluated: discoveryData.metadata?.candidates_evaluated || discoveryData.candidates.length,
+      completed: discoveryData.metadata?.completed !== false,
+    },
+    source,
+  };
+}
+
+/**
  * Execute discovery via Clawdbot CLI (local fallback)
  */
 async function executeViaClawdbot(job: DiscoveryJob, timeoutMs: number): Promise<DiscoveryResult | null> {
+  let stdout = '';
+  let stderr = '';
+  
   try {
     // Get the default agent
     const agent = await getDefaultAgent('clawdbot');
@@ -183,7 +228,13 @@ async function executeViaClawdbot(job: DiscoveryJob, timeoutMs: number): Promise
       return null;
     }
     
-    logger.info('Invoking Clawdbot agent', { agent });
+    // Calculate CLI timeout
+    const cliTimeoutSeconds = Math.max(30, Math.floor(job.timeoutSeconds * 0.9));
+    
+    logger.info('Invoking Clawdbot agent', { 
+      agent, 
+      timeoutSeconds: cliTimeoutSeconds,
+    });
     
     // Build the message
     const message = `${job.systemPrompt}\n\n---\n\n${job.userPrompt}\n\nIMPORTANT: Return your response as valid JSON only. No markdown, no extra text.`;
@@ -195,60 +246,48 @@ async function executeViaClawdbot(job: DiscoveryJob, timeoutMs: number): Promise
       .replace(/\$/g, '\\$')
       .replace(/`/g, '\\`');
     
-    // Use clawdbot agent with --local and --json
-    const { stdout, stderr } = await execAsync(
-      `clawdbot agent --local --json --agent ${agent} -m "${escapedMessage}"`,
+    // Use clawdbot agent with --local, --json, and --timeout
+    const result = await execAsync(
+      `clawdbot agent --local --json --timeout ${cliTimeoutSeconds} --agent ${agent} -m "${escapedMessage}"`,
       { 
         timeout: timeoutMs,
         maxBuffer: 10 * 1024 * 1024,
       }
     );
     
+    stdout = result.stdout;
+    stderr = result.stderr;
+    
     if (stderr) {
       logger.debug('Clawdbot stderr', { stderr: stderr.substring(0, 500) });
     }
     
-    // Parse the CLI JSON output
-    let cliResponse: any;
-    try {
-      cliResponse = JSON.parse(stdout);
-    } catch (e) {
-      logger.debug('Failed to parse Clawdbot CLI output as JSON');
-      return null;
-    }
-    
-    // Extract the agent's text response
-    const agentText = cliResponse.payloads?.[0]?.text || '';
-    logger.debug('Clawdbot agent response', { text: agentText.substring(0, 500) });
-    
-    // Try to extract JSON from the agent's response
-    const discoveryData = extractJsonFromResponse(agentText);
-    
-    if (!discoveryData || !discoveryData.candidates || discoveryData.candidates.length === 0) {
-      logger.debug('Clawdbot response did not contain valid candidates');
-      return null;
-    }
-    
-    return {
-      candidates: discoveryData.candidates,
-      summary: discoveryData.summary || { 
-        headline: `Found ${discoveryData.candidates.length} candidates via Clawdbot`, 
-        key_insights: [], 
-        venues_searched: [] 
-      },
-      metadata: discoveryData.metadata || { 
-        searches_performed: 0, 
-        pages_fetched: 0, 
-        candidates_evaluated: discoveryData.candidates.length 
-      },
-      source: 'clawdbot',
-    };
+    return parseOpenClawResponse(stdout, 'clawdbot');
     
   } catch (error: any) {
+    // Check if we got partial output before timeout
+    const partialStdout = error.stdout || stdout;
+    const partialStderr = error.stderr || stderr;
+    
+    const isTimeout = error.killed || error.message?.includes('TIMEOUT') || error.signal === 'SIGTERM';
+    
+    if (isTimeout && partialStdout) {
+      logger.warn('Clawdbot timed out, checking for partial results');
+      const partialResult = parseOpenClawResponse(partialStdout, 'clawdbot');
+      if (partialResult && partialResult.candidates.length > 0) {
+        logger.info('Recovered partial results from timeout', { 
+          candidates: partialResult.candidates.length 
+        });
+        partialResult.metadata.completed = false;
+        return partialResult;
+      }
+    }
+    
     logger.debug('Clawdbot execution failed', { 
       error: error.message,
-      stderr: error.stderr?.substring(0, 1000),
-      stdout: error.stdout?.substring(0, 500),
+      isTimeout,
+      stderr: partialStderr?.substring(0, 1000),
+      stdout: partialStdout?.substring(0, 500),
     });
     return null;
   }

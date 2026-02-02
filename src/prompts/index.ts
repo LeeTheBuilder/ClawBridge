@@ -12,6 +12,10 @@ export interface DiscoveryJob {
   userPrompt: string;
   tools: string[];
   maxTokens: number;
+  timeoutSeconds: number;
+  maxSearches: number;
+  maxFetches: number;
+  topK: number;
 }
 
 /**
@@ -36,6 +40,13 @@ You have access to these tools:
 - News articles without direct profiles
 - Social media with no recent activity
 - Spam or promotional content
+
+## Time Management (CRITICAL)
+- You have a strict time budget. Track your progress.
+- If you're running low on time, STOP searching and return what you have.
+- It's better to return 2 good candidates than timeout with nothing.
+- Always return valid JSON, even if you only found 1 candidate.
+- If time is almost up, skip drafting intros and just return the core data.
 
 ## Output Format
 Return results as JSON with this structure:
@@ -68,18 +79,22 @@ Return results as JSON with this structure:
   "metadata": {
     "searches_performed": 5,
     "pages_fetched": 12,
-    "candidates_evaluated": 15
+    "candidates_evaluated": 15,
+    "completed": true
   }
-}`;
+}
+
+If you run out of time, set "completed": false in metadata and return whatever you have.`;
 }
 
 /**
  * Build the user prompt for a specific discovery job
  */
-function buildUserPrompt(config: Config): string {
+function buildUserPrompt(config: Config, timeoutSeconds: number): string {
   const profile = config.project_profile;
   const budget = config.run_budget || { max_searches: 20, max_fetches: 50, max_minutes: 10 };
   const constraints = config.constraints || {};
+  const topK = constraints.top_k || 5;
 
   return `## Project Profile
 
@@ -95,10 +110,11 @@ ${profile.tone ? `**Tone for messages:** ${profile.tone}` : ''}
 
 ${profile.disallowed?.length ? `**Do not contact:** ${profile.disallowed.join(', ')}` : ''}
 
-## Search Budget
+## STRICT BUDGET LIMITS
+- **Time limit: ${timeoutSeconds} seconds** (HARD LIMIT - return results before this!)
 - Maximum searches: ${budget.max_searches}
 - Maximum page fetches: ${budget.max_fetches}
-- Time limit: ${budget.max_minutes} minutes
+- Target candidates: ${topK}
 
 ## Constraints
 ${constraints.regions?.length ? `- Target regions: ${constraints.regions.join(', ')}` : ''}
@@ -110,11 +126,13 @@ ${constraints.no_spam_rules?.length ? `- Rules: ${constraints.no_spam_rules.join
 1. Search for people/companies that match our "ask" and "ideal persona"
 2. For each potential match, fetch their profile to verify
 3. Score candidates on relevance, intent, credibility, recency, engagement
-4. Return the top ${constraints.top_k || 5} candidates with:
+4. Return the top ${topK} candidates with:
    - Full evidence (at least 2 URLs each)
    - Clear reasons why they match
    - Personalized intro message drafts
    - Risk flags if applicable
+
+**IMPORTANT**: You have ${timeoutSeconds} seconds. If you're at 80% of time, STOP and return what you have. Partial results are better than no results.
 
 Focus on warm introduction opportunities, not cold leads. Look for intent signals like "looking for partners", "hiring", "building", "expanding".
 
@@ -125,11 +143,19 @@ Return ONLY the JSON output, no additional text.`;
  * Build a complete discovery job for OpenClaw
  */
 export function buildDiscoveryJob(config: Config): DiscoveryJob {
+  const budget = config.run_budget || { max_searches: 20, max_fetches: 50, max_minutes: 10 };
+  const constraints = config.constraints || {};
+  const timeoutSeconds = budget.max_minutes * 60;
+  
   return {
     systemPrompt: buildSystemPrompt(),
-    userPrompt: buildUserPrompt(config),
+    userPrompt: buildUserPrompt(config, timeoutSeconds),
     tools: ['web_search', 'web_fetch'],
     maxTokens: 4000,
+    timeoutSeconds,
+    maxSearches: budget.max_searches,
+    maxFetches: budget.max_fetches,
+    topK: constraints.top_k || 5,
   };
 }
 
