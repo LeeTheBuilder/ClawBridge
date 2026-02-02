@@ -1,61 +1,125 @@
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import { Config } from './config';
 import { ConnectionBrief } from './run';
 import { logger } from './logger';
+import { validateFull, printValidationErrors } from './validate';
+
+export interface UploadResult {
+  ok: boolean;
+  runId: string;
+  vaultUrl: string;
+  message?: string;
+}
 
 /**
- * Upload a connection brief to the vault
+ * Upload a connection brief to the vault with retries
  */
-export async function uploadToVault(brief: ConnectionBrief, config: Config): Promise<void> {
+export async function uploadToVault(brief: ConnectionBrief, config: Config): Promise<UploadResult | null> {
   if (!config.vault?.enabled) {
     logger.debug('Vault upload disabled');
-    return;
+    return null;
   }
   
   if (!config.vault.api_url) {
     throw new Error('Vault API URL not configured');
   }
   
-  const token = config.vault.workspace_token || config.workspace_token;
+  const apiKey = config.vault.workspace_key || config.workspace_key;
   
-  if (!token) {
-    throw new Error('Workspace token required for vault upload');
+  if (!apiKey) {
+    throw new Error('Workspace API key required for vault upload. Set CLAWBRIDGE_WORKSPACE_KEY environment variable.');
   }
+
+  // Validate before upload
+  logger.info('Validating connection brief before upload...');
+  const validation = validateFull(brief);
+  if (!validation.valid) {
+    printValidationErrors(validation);
+    throw new Error('Validation failed. Connection brief will not be uploaded.');
+  }
+  logger.info('Validation passed');
+  
+  const uploadUrl = `${config.vault.api_url}/api/upload-run`;
   
   logger.info('Uploading to vault', { 
     api_url: config.vault.api_url,
     workspace_id: config.workspace_id,
   });
-  
-  try {
-    const response = await axios.post(
-      `${config.vault.api_url}/workspaces/${config.workspace_id}/runs`,
-      brief,
-      {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 30000,
-      }
-    );
-    
-    logger.info('Vault upload successful', { 
-      run_id: brief.run_id,
-      vault_id: response.data.id,
-    });
-    
-  } catch (error: any) {
-    if (error.response) {
-      logger.error('Vault upload failed', {
-        status: error.response.status,
-        message: error.response.data?.message || error.message,
+
+  // Retry configuration
+  const maxRetries = 3;
+  const backoffMs = [1000, 3000, 9000]; // 1s, 3s, 9s
+
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const response = await axios.post<UploadResult>(
+        uploadUrl,
+        { run: brief },
+        {
+          headers: {
+            'X-Workspace-Id': config.workspace_id,
+            'X-Workspace-Key': apiKey,
+            'Content-Type': 'application/json',
+          },
+          timeout: 30000,
+        }
+      );
+      
+      logger.info('Vault upload successful', { 
+        run_id: brief.run_id,
+        vault_url: response.data.vaultUrl,
       });
-    } else {
-      logger.error('Vault upload failed', { error: error.message });
+      
+      return response.data;
+      
+    } catch (error: any) {
+      lastError = error;
+      const axiosError = error as AxiosError<{ error?: string; message?: string }>;
+      
+      if (axiosError.response) {
+        const status = axiosError.response.status;
+        const errorMessage = axiosError.response.data?.error || axiosError.response.data?.message || error.message;
+        
+        // Don't retry on client errors (except 429)
+        if (status >= 400 && status < 500 && status !== 429) {
+          logger.error('Vault upload failed (not retrying)', {
+            status,
+            message: errorMessage,
+          });
+          throw new Error(`Upload failed: ${errorMessage}`);
+        }
+        
+        // Rate limited
+        if (status === 429) {
+          logger.warn('Rate limited, will retry after backoff', { attempt: attempt + 1 });
+        }
+        
+        logger.warn('Vault upload attempt failed', {
+          attempt: attempt + 1,
+          status,
+          message: errorMessage,
+        });
+      } else {
+        logger.warn('Vault upload attempt failed (network error)', {
+          attempt: attempt + 1,
+          error: error.message,
+        });
+      }
+      
+      // Wait before retry (except on last attempt)
+      if (attempt < maxRetries - 1) {
+        const waitMs = backoffMs[attempt] || 9000;
+        logger.info(`Retrying in ${waitMs / 1000}s...`);
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+      }
     }
-    throw error;
   }
+  
+  // All retries exhausted
+  logger.error('Vault upload failed after all retries');
+  throw lastError || new Error('Upload failed after all retries');
 }
 
 /**

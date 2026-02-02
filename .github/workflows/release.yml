@@ -1,0 +1,137 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., v1.0.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            binary_name: clawbridge-linux-x64
+          - os: ubuntu-latest
+            target: linux-arm64
+            binary_name: clawbridge-linux-arm64
+          - os: macos-latest
+            target: macos-x64
+            binary_name: clawbridge-macos-x64
+          - os: macos-latest
+            target: macos-arm64
+            binary_name: clawbridge-macos-arm64
+          - os: windows-latest
+            target: win-x64
+            binary_name: clawbridge-win-x64.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Install pkg
+        run: npm install -g @yao-pkg/pkg
+
+      - name: Package binary
+        run: |
+          pkg . --target node20-${{ matrix.target }} --output ${{ matrix.binary_name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary_name }}
+          path: ${{ matrix.binary_name }}
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: binaries
+          merge-multiple: true
+
+      - name: List binaries
+        run: ls -la binaries/
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create checksums
+        working-directory: binaries
+        run: |
+          sha256sum * > checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Clawbridge Runner ${{ steps.version.outputs.version }}
+          body: |
+            ## Clawbridge Runner ${{ steps.version.outputs.version }}
+
+            ### Installation
+
+            **macOS (Apple Silicon):**
+            ```bash
+            curl -fsSL https://clawbridge.dev/install | bash
+            ```
+
+            **Or manual download:**
+            ```bash
+            # macOS Apple Silicon
+            curl -L https://github.com/moltlife/clawbridge-runner/releases/download/${{ steps.version.outputs.version }}/clawbridge-macos-arm64 -o clawbridge
+            chmod +x clawbridge
+            sudo mv clawbridge /usr/local/bin/
+
+            # macOS Intel
+            curl -L https://github.com/moltlife/clawbridge-runner/releases/download/${{ steps.version.outputs.version }}/clawbridge-macos-x64 -o clawbridge
+            chmod +x clawbridge
+            sudo mv clawbridge /usr/local/bin/
+
+            # Linux x64
+            curl -L https://github.com/moltlife/clawbridge-runner/releases/download/${{ steps.version.outputs.version }}/clawbridge-linux-x64 -o clawbridge
+            chmod +x clawbridge
+            sudo mv clawbridge /usr/local/bin/
+            ```
+
+            ### Quick Start
+            ```bash
+            clawbridge link CB-XXXXXX   # Use connect code from clawbridge.dev
+            clawbridge run               # Run the skill
+            ```
+          files: binaries/*
+          draft: false
+          prerelease: false

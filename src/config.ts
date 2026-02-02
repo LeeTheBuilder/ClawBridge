@@ -50,12 +50,14 @@ export interface DeliveryConfig {
 export interface VaultConfig {
   enabled: boolean;
   api_url?: string;
-  workspace_token?: string;
+  workspace_token?: string;  // deprecated, use workspace_key
+  workspace_key?: string;
 }
 
 export interface Config {
   workspace_id: string;
-  workspace_token?: string;
+  workspace_token?: string;  // deprecated, use workspace_key
+  workspace_key?: string;
   project_profile: ProjectProfile;
   constraints?: Constraints;
   run_budget?: RunBudget;
@@ -157,9 +159,12 @@ export async function loadConfig(configPath: string): Promise<Config> {
       process.env.SMTP_PASSWORD || config.delivery.email.smtp_pass;
   }
   
+  // Load workspace key from environment
+  config.workspace_key = process.env.CLAWBRIDGE_WORKSPACE_KEY || config.workspace_key || config.workspace_token;
+  
   if (config.vault) {
-    config.vault.workspace_token = 
-      process.env.CLAWBRIDGE_WORKSPACE_TOKEN || config.vault.workspace_token;
+    config.vault.workspace_key = 
+      process.env.CLAWBRIDGE_WORKSPACE_KEY || config.vault.workspace_key || config.vault.workspace_token;
   }
   
   logger.debug('Configuration loaded', { workspace_id: config.workspace_id });

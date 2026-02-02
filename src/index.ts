@@ -119,6 +119,53 @@ program
     }
   });
 
+program
+  .command('doctor')
+  .description('Check system setup and configuration')
+  .option('-c, --config <path>', 'Path to config file', './config.yml')
+  .action(async (options) => {
+    try {
+      const { runDoctor } = await import('./doctor');
+      await runDoctor(options.config);
+    } catch (error) {
+      logger.error('Doctor check failed:', error);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('install-skill')
+  .description('Install the clawbridge skill from GitHub')
+  .option('-d, --dir <path>', 'Target directory for skill installation', '.')
+  .option('--url <url>', 'Custom GitHub URL for the skill', 'https://github.com/clawbridge/clawbridge-skill')
+  .action(async (options) => {
+    try {
+      const { installSkill } = await import('./install-skill');
+      await installSkill(options.dir, options.url);
+    } catch (error) {
+      logger.error('Skill installation failed:', error);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('link <code>')
+  .description('Link a workspace using a connect code from clawbridge.dev')
+  .option('-d, --dir <path>', 'Directory to create config in', '.')
+  .option('--api-url <url>', 'API URL for resolving connect codes', 'https://clawbridge.dev')
+  .action(async (code, options) => {
+    try {
+      const { linkWorkspace } = await import('./link');
+      await linkWorkspace(code, {
+        dir: options.dir,
+        apiUrl: options.apiUrl,
+      });
+    } catch (error) {
+      logger.error('Link failed:', error);
+      process.exit(1);
+    }
+  });
+
 program.parse(process.argv);
 
 // Show help if no command provided

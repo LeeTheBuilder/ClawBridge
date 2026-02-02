@@ -57,18 +57,13 @@ export function startScheduler(options: SchedulerOptions): void {
       } finally {
         isRunning = false;
       }
-    },
-    null, // onComplete
-    true, // start
-    undefined, // timezone (use system default)
-    undefined, // context
-    false, // runOnInit
-    undefined, // utcOffset
+    }
   );
+  activeJob.start();
   
   // Log next scheduled run
   const nextRun = activeJob.nextDate();
-  logger.info('Next scheduled run', { time: nextRun.toISO() });
+  logger.info('Next scheduled run', { time: nextRun.toJSDate().toISOString() });
 }
 
 /**

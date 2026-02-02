@@ -80,12 +80,21 @@ export async function testDelivery(
 export function formatSummaryMessage(brief: ConnectionBrief): string {
   const lines: string[] = [];
   
-  // Header
-  lines.push('📋 **Connection Brief Ready**\n');
+  // Get vault URL if available
+  const vaultUrl = (brief as any)._vaultUrl;
+  
+  // Header with vault link
+  lines.push('🌉 **Clawbridge: Connection Brief Ready**\n');
   
   // Summary
   if (brief.summary) {
     lines.push(brief.summary.headline);
+    lines.push('');
+  }
+  
+  // Vault URL (if available)
+  if (vaultUrl) {
+    lines.push(`**View in Vault:** ${vaultUrl}`);
     lines.push('');
   }
   
@@ -94,21 +103,9 @@ export function formatSummaryMessage(brief: ConnectionBrief): string {
   if (count === 0) {
     lines.push('No candidates found matching your criteria this run.');
   } else {
-    lines.push(`**${count} candidate${count > 1 ? 's' : ''}** ready for review:\n`);
-    
-    // List candidates
-    brief.candidates.forEach((candidate, index) => {
-      const score = candidate.scores?.final_score 
-        ? ` (${candidate.scores.final_score.toFixed(0)})` 
-        : '';
-      const role = candidate.role && candidate.company 
-        ? ` - ${candidate.role} @ ${candidate.company}` 
-        : '';
-      lines.push(`${index + 1}. **${candidate.name}**${role}${score}`);
-    });
+    lines.push(`**${count} candidate${count > 1 ? 's' : ''}** ready for review`);
+    lines.push('');
   }
-  
-  lines.push('');
   
   // Key insights
   if (brief.summary?.key_insights && brief.summary.key_insights.length > 0) {
@@ -120,13 +117,15 @@ export function formatSummaryMessage(brief: ConnectionBrief): string {
   }
   
   // Call to action
-  if (count > 0) {
+  if (count > 0 && vaultUrl) {
+    lines.push(`👉 Review and approve candidates: ${vaultUrl}`);
+  } else if (count > 0) {
     lines.push('👉 Review the full report and approve/reject candidates.');
   }
   
   // Run info
   lines.push('');
-  lines.push(`_Run: ${new Date(brief.run_id).toLocaleString()}_`);
+  lines.push(`_Workspace: ${brief.workspace_id} | Run: ${new Date(brief.run_id).toLocaleString()}_`);
   
   return lines.join('\n');
 }
