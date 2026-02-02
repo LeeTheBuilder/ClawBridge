@@ -109,12 +109,32 @@ export async function linkWorkspace(code: string, options: LinkOptions): Promise
 
   const config: any = {
     workspace_id: linkData.workspaceId,
+    
+    // Your project profile - EDIT THESE VALUES
     project_profile: {
       offer: 'Describe what you offer (e.g., We help B2B SaaS companies automate their content operations)',
       ask: 'What are you looking for (e.g., Marketing partners, agency relationships)',
       ideal_persona: 'Your ideal contact (e.g., VP Marketing at Series A-C startups)',
       verticals: ['Your', 'industry', 'keywords'],
+      tone: 'friendly, professional',
     },
+    
+    // Search budget limits
+    run_budget: {
+      max_searches: 20,    // Maximum web searches per run
+      max_fetches: 50,     // Maximum pages to fetch per run
+      max_minutes: 1,     // Hard time limit (will return partial results)
+    },
+    
+    // Quality constraints
+    constraints: {
+      top_k: 5,            // Return top N candidates
+      recency_days: 30,    // Only candidates active within N days
+      min_evidence: 2,     // Minimum evidence URLs per candidate
+      regions: [],         // Optional: ['US', 'EU'] to filter by region
+      avoid_list: [],      // Optional: accounts/domains to skip
+    },
+    
     delivery: {
       target: 'none',  // Vault is the only output channel
     },

@@ -31,8 +31,8 @@ You have access to these tools:
 
 ## Quality Requirements
 - Find real people/companies with verifiable evidence
-- Each candidate needs at least 2 evidence URLs
-- Focus on recent activity (within 30 days)
+- Each candidate needs sufficient evidence URLs
+- Focus on recent activity
 - Look for intent signals (hiring, seeking partners, building, expanding)
 
 ## Anti-Patterns to Avoid
@@ -116,7 +116,9 @@ ${profile.disallowed?.length ? `**Do not contact:** ${profile.disallowed.join(',
 - Maximum page fetches: ${budget.max_fetches}
 - Target candidates: ${topK}
 
-## Constraints
+## Quality Constraints
+- Minimum evidence URLs per candidate: ${constraints.min_evidence || 2}
+- Activity recency: within ${constraints.recency_days || 30} days
 ${constraints.regions?.length ? `- Target regions: ${constraints.regions.join(', ')}` : ''}
 ${constraints.avoid_list?.length ? `- Avoid: ${constraints.avoid_list.join(', ')}` : ''}
 ${constraints.no_spam_rules?.length ? `- Rules: ${constraints.no_spam_rules.join('; ')}` : ''}
