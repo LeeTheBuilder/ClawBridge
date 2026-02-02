@@ -1,10 +1,15 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
+import * as dotenv from 'dotenv';
+import * as path from 'path';
 import { runSkill } from './run';
 import { startScheduler, stopScheduler } from './schedule';
-import { loadConfig, getDefaultConfigPath, getConfigDir } from './config';
+import { loadConfig, getDefaultConfigPath, getConfigDir, getDefaultEnvPath } from './config';
 import { logger } from './logger';
+
+// Load .env from ~/.clawbridge/.env if it exists
+dotenv.config({ path: getDefaultEnvPath() });
 
 // Default config path is ~/.clawbridge/config.yml
 const DEFAULT_CONFIG = getDefaultConfigPath();
