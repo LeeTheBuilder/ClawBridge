@@ -1,16 +1,12 @@
 /**
  * OpenClaw Worker Module
  * 
- * Handles calling OpenClaw as a worker to perform web search/fetch/extraction.
- * Falls back to clawdbot/moltbot API if OpenClaw is not available.
+ * Handles calling OpenClaw/Clawdbot as a worker to perform web search/fetch/extraction.
+ * Uses local CLI tools (no external APIs).
  */
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
-import axios from 'axios';
 import { logger } from './logger';
 import { DiscoveryJob } from './prompts';
 
@@ -28,15 +24,15 @@ export interface DiscoveryResult {
     pages_fetched: number;
     candidates_evaluated: number;
   };
-  source: 'openclaw' | 'clawdbot' | 'moltbot' | 'simulated';
+  source: 'openclaw' | 'clawdbot' | 'simulated';
 }
 
 /**
- * Check if OpenClaw CLI is available
+ * Check if a CLI command is available
  */
-async function checkOpenClaw(): Promise<boolean> {
+async function checkCommand(cmd: string): Promise<boolean> {
   try {
-    await execAsync('openclaw --version');
+    await execAsync(`${cmd} --version`);
     return true;
   } catch {
     return false;
@@ -44,191 +40,260 @@ async function checkOpenClaw(): Promise<boolean> {
 }
 
 /**
- * Execute discovery via OpenClaw CLI
+ * Get the default agent name for a CLI tool
+ */
+async function getDefaultAgent(cli: string): Promise<string | null> {
+  try {
+    const { stdout } = await execAsync(`${cli} agents list`);
+    // Look for the default agent (marked with "(default)")
+    const match = stdout.match(/- (\w+) \(default\)/);
+    if (match) {
+      return match[1];
+    }
+    // Or just get the first agent listed
+    const firstAgent = stdout.match(/- (\w+)/);
+    return firstAgent ? firstAgent[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extract JSON from a text response that might contain markdown code blocks
+ */
+function extractJsonFromResponse(text: string): any | null {
+  // Try direct JSON parse first
+  try {
+    return JSON.parse(text);
+  } catch {}
+  
+  // Look for JSON in markdown code blocks
+  const jsonBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (jsonBlockMatch) {
+    try {
+      return JSON.parse(jsonBlockMatch[1]);
+    } catch {}
+  }
+  
+  // Look for JSON object anywhere in the text
+  const jsonMatch = text.match(/\{[\s\S]*"candidates"[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      return JSON.parse(jsonMatch[0]);
+    } catch {}
+  }
+  
+  return null;
+}
+
+/**
+ * Execute discovery via OpenClaw CLI (local)
  */
 async function executeViaOpenClaw(job: DiscoveryJob, timeoutMs: number): Promise<DiscoveryResult | null> {
-  const tmpDir = path.join(os.tmpdir(), `clawbridge-${Date.now()}`);
-  
   try {
-    fs.mkdirSync(tmpDir, { recursive: true });
+    // Get the default agent
+    const agent = await getDefaultAgent('openclaw');
+    if (!agent) {
+      logger.debug('No OpenClaw agent configured');
+      return null;
+    }
     
-    // Write the job to a temp file
-    const jobPath = path.join(tmpDir, 'job.json');
-    const resultPath = path.join(tmpDir, 'result.json');
+    logger.info('Invoking OpenClaw agent', { agent });
     
-    const jobData = {
-      system: job.systemPrompt,
-      message: job.userPrompt,
-      tools: job.tools,
-      max_tokens: job.maxTokens,
-    };
+    // Build the message - combine system and user prompts
+    // Ask for JSON output explicitly
+    const message = `${job.systemPrompt}\n\n---\n\n${job.userPrompt}\n\nIMPORTANT: Return your response as valid JSON only. No markdown, no extra text.`;
     
-    fs.writeFileSync(jobPath, JSON.stringify(jobData, null, 2));
+    // Escape for shell
+    const escapedMessage = message
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\$/g, '\\$')
+      .replace(/`/g, '\\`');
     
-    logger.info('Invoking OpenClaw worker');
-    
-    // Try the correct OpenClaw CLI syntax
-    // openclaw run with message and optional system prompt
+    // Use openclaw agent with --local (runs embedded, requires model API keys in env)
+    // and --json for structured output
     const { stdout, stderr } = await execAsync(
-      `openclaw run -m "${job.userPrompt.replace(/"/g, '\\"').substring(0, 500)}..." --json`,
-      { timeout: timeoutMs }
+      `openclaw agent --local --json --agent ${agent} -m "${escapedMessage}"`,
+      { 
+        timeout: timeoutMs,
+        maxBuffer: 10 * 1024 * 1024, // 10MB buffer for large outputs
+      }
     );
     
     if (stderr) {
-      logger.debug('OpenClaw stderr', { stderr: stderr.substring(0, 200) });
+      logger.debug('OpenClaw stderr', { stderr: stderr.substring(0, 500) });
     }
     
-    // Parse the result
-    const result = JSON.parse(stdout);
+    // Parse the CLI JSON output
+    let cliResponse: any;
+    try {
+      cliResponse = JSON.parse(stdout);
+    } catch (e) {
+      logger.debug('Failed to parse OpenClaw CLI output as JSON');
+      return null;
+    }
+    
+    // Extract the agent's text response
+    const agentText = cliResponse.payloads?.[0]?.text || '';
+    logger.debug('OpenClaw agent response', { text: agentText.substring(0, 500) });
+    
+    // Try to extract JSON from the agent's response
+    const discoveryData = extractJsonFromResponse(agentText);
+    
+    if (!discoveryData || !discoveryData.candidates || discoveryData.candidates.length === 0) {
+      logger.debug('OpenClaw response did not contain valid candidates');
+      return null;
+    }
     
     return {
-      candidates: result.candidates || [],
-      summary: result.summary || { headline: '', key_insights: [], venues_searched: [] },
-      metadata: result.metadata || { searches_performed: 0, pages_fetched: 0, candidates_evaluated: 0 },
+      candidates: discoveryData.candidates,
+      summary: discoveryData.summary || { 
+        headline: `Found ${discoveryData.candidates.length} candidates via OpenClaw`, 
+        key_insights: [], 
+        venues_searched: [] 
+      },
+      metadata: discoveryData.metadata || { 
+        searches_performed: 0, 
+        pages_fetched: 0, 
+        candidates_evaluated: discoveryData.candidates.length 
+      },
       source: 'openclaw',
     };
     
   } catch (error: any) {
-    logger.debug('OpenClaw execution failed', { error: error.message });
+    logger.debug('OpenClaw execution failed', { 
+      error: error.message,
+      stderr: error.stderr?.substring(0, 1000),
+      stdout: error.stdout?.substring(0, 500),
+    });
     return null;
-  } finally {
-    // Clean up
-    try {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    } catch {}
   }
 }
 
 /**
- * Execute discovery via clawdbot API (fallback)
+ * Execute discovery via Clawdbot CLI (local fallback)
  */
 async function executeViaClawdbot(job: DiscoveryJob, timeoutMs: number): Promise<DiscoveryResult | null> {
-  const apiUrl = process.env.CLAWDBOT_API_URL || 'https://api.clawdbot.com';
-  const apiKey = process.env.CLAWDBOT_API_KEY;
-  
-  if (!apiKey) {
-    logger.debug('Clawdbot API key not configured');
-    return null;
-  }
-  
   try {
-    logger.info('Invoking Clawdbot API');
+    // Get the default agent
+    const agent = await getDefaultAgent('clawdbot');
+    if (!agent) {
+      logger.debug('No Clawdbot agent configured');
+      return null;
+    }
     
-    const response = await axios.post(
-      `${apiUrl}/v1/discover`,
-      {
-        system_prompt: job.systemPrompt,
-        user_prompt: job.userPrompt,
-        tools: job.tools,
-        max_tokens: job.maxTokens,
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
+    logger.info('Invoking Clawdbot agent', { agent });
+    
+    // Build the message
+    const message = `${job.systemPrompt}\n\n---\n\n${job.userPrompt}\n\nIMPORTANT: Return your response as valid JSON only. No markdown, no extra text.`;
+    
+    // Escape for shell
+    const escapedMessage = message
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\$/g, '\\$')
+      .replace(/`/g, '\\`');
+    
+    // Use clawdbot agent with --local and --json
+    const { stdout, stderr } = await execAsync(
+      `clawdbot agent --local --json --agent ${agent} -m "${escapedMessage}"`,
+      { 
         timeout: timeoutMs,
+        maxBuffer: 10 * 1024 * 1024,
       }
     );
     
-    const result = response.data;
+    if (stderr) {
+      logger.debug('Clawdbot stderr', { stderr: stderr.substring(0, 500) });
+    }
+    
+    // Parse the CLI JSON output
+    let cliResponse: any;
+    try {
+      cliResponse = JSON.parse(stdout);
+    } catch (e) {
+      logger.debug('Failed to parse Clawdbot CLI output as JSON');
+      return null;
+    }
+    
+    // Extract the agent's text response
+    const agentText = cliResponse.payloads?.[0]?.text || '';
+    logger.debug('Clawdbot agent response', { text: agentText.substring(0, 500) });
+    
+    // Try to extract JSON from the agent's response
+    const discoveryData = extractJsonFromResponse(agentText);
+    
+    if (!discoveryData || !discoveryData.candidates || discoveryData.candidates.length === 0) {
+      logger.debug('Clawdbot response did not contain valid candidates');
+      return null;
+    }
     
     return {
-      candidates: result.candidates || [],
-      summary: result.summary || { headline: '', key_insights: [], venues_searched: [] },
-      metadata: result.metadata || { searches_performed: 0, pages_fetched: 0, candidates_evaluated: 0 },
+      candidates: discoveryData.candidates,
+      summary: discoveryData.summary || { 
+        headline: `Found ${discoveryData.candidates.length} candidates via Clawdbot`, 
+        key_insights: [], 
+        venues_searched: [] 
+      },
+      metadata: discoveryData.metadata || { 
+        searches_performed: 0, 
+        pages_fetched: 0, 
+        candidates_evaluated: discoveryData.candidates.length 
+      },
       source: 'clawdbot',
     };
     
   } catch (error: any) {
-    logger.debug('Clawdbot API failed', { error: error.message });
-    return null;
-  }
-}
-
-/**
- * Execute discovery via moltbot API (fallback)
- */
-async function executeViaMoltbot(job: DiscoveryJob, timeoutMs: number): Promise<DiscoveryResult | null> {
-  const apiUrl = process.env.MOLTBOT_API_URL || 'https://api.moltbot.com';
-  const apiKey = process.env.MOLTBOT_API_KEY;
-  
-  if (!apiKey) {
-    logger.debug('Moltbot API key not configured');
-    return null;
-  }
-  
-  try {
-    logger.info('Invoking Moltbot API');
-    
-    const response = await axios.post(
-      `${apiUrl}/v1/agent/run`,
-      {
-        prompt: `${job.systemPrompt}\n\n---\n\n${job.userPrompt}`,
-        tools: job.tools,
-        output_format: 'json',
-      },
-      {
-        headers: {
-          'X-API-Key': apiKey,
-          'Content-Type': 'application/json',
-        },
-        timeout: timeoutMs,
-      }
-    );
-    
-    const result = response.data;
-    
-    return {
-      candidates: result.candidates || result.data?.candidates || [],
-      summary: result.summary || result.data?.summary || { headline: '', key_insights: [], venues_searched: [] },
-      metadata: result.metadata || result.data?.metadata || { searches_performed: 0, pages_fetched: 0, candidates_evaluated: 0 },
-      source: 'moltbot',
-    };
-    
-  } catch (error: any) {
-    logger.debug('Moltbot API failed', { error: error.message });
+    logger.debug('Clawdbot execution failed', { 
+      error: error.message,
+      stderr: error.stderr?.substring(0, 1000),
+      stdout: error.stdout?.substring(0, 500),
+    });
     return null;
   }
 }
 
 /**
  * Execute discovery with fallback chain:
- * 1. OpenClaw CLI (if available)
- * 2. Clawdbot API (if configured)
- * 3. Moltbot API (if configured)
- * 4. Simulated data (last resort)
+ * 1. OpenClaw CLI (local, if available)
+ * 2. Clawdbot CLI (local, if available)
+ * 3. Simulated data (last resort)
  */
 export async function executeDiscovery(job: DiscoveryJob, timeoutMs: number = 600000): Promise<DiscoveryResult> {
   logger.info('Starting discovery execution');
   
   // Try OpenClaw first
-  const hasOpenClaw = await checkOpenClaw();
+  const hasOpenClaw = await checkCommand('openclaw');
   if (hasOpenClaw) {
+    logger.info('OpenClaw CLI detected, attempting discovery');
     const result = await executeViaOpenClaw(job, timeoutMs);
     if (result && result.candidates.length > 0) {
       logger.info('Discovery completed via OpenClaw', { candidates: result.candidates.length });
       return result;
     }
-    logger.debug('OpenClaw returned no results, trying fallbacks');
+    logger.info('OpenClaw returned no results, trying Clawdbot');
+  } else {
+    logger.info('OpenClaw CLI not found, trying Clawdbot');
   }
   
-  // Try Clawdbot API
-  const clawdbotResult = await executeViaClawdbot(job, timeoutMs);
-  if (clawdbotResult && clawdbotResult.candidates.length > 0) {
-    logger.info('Discovery completed via Clawdbot', { candidates: clawdbotResult.candidates.length });
-    return clawdbotResult;
-  }
-  
-  // Try Moltbot API
-  const moltbotResult = await executeViaMoltbot(job, timeoutMs);
-  if (moltbotResult && moltbotResult.candidates.length > 0) {
-    logger.info('Discovery completed via Moltbot', { candidates: moltbotResult.candidates.length });
-    return moltbotResult;
+  // Try Clawdbot as fallback
+  const hasClawdbot = await checkCommand('clawdbot');
+  if (hasClawdbot) {
+    logger.info('Clawdbot CLI detected, attempting discovery');
+    const result = await executeViaClawdbot(job, timeoutMs);
+    if (result && result.candidates.length > 0) {
+      logger.info('Discovery completed via Clawdbot', { candidates: result.candidates.length });
+      return result;
+    }
+    logger.info('Clawdbot returned no results');
+  } else {
+    logger.info('Clawdbot CLI not found');
   }
   
   // Fall back to simulated data
-  logger.warn('All discovery methods failed, using simulated data');
+  logger.warn('No discovery method succeeded, using simulated data');
+  logger.warn('For real discovery, ensure openclaw or clawdbot is configured with model API keys');
   return getSimulatedResult();
 }
 
@@ -291,7 +356,7 @@ function getSimulatedResult(): DiscoveryResult {
       }
     ],
     summary: {
-      headline: 'Found 2 candidates (simulated - configure OpenClaw/Clawdbot/Moltbot for real discovery)',
+      headline: 'Found 2 candidates (simulated - install OpenClaw or Clawdbot for real discovery)',
       key_insights: [
         'High partnership intent detected in AI vertical',
         'Found 1 immediate reach-out opportunity',

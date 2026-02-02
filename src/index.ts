@@ -28,8 +28,13 @@ program
   .option('-p, --profile <name>', 'Profile name to use (default: default)')
   .option('--no-upload', 'Skip vault upload')
   .option('--dry-run', 'Preview what would be done without executing')
+  .option('--debug', 'Enable debug logging (same as LOG_LEVEL=debug)')
   .action(async (options) => {
     try {
+      if (options.debug) {
+        process.env.LOG_LEVEL = 'debug';
+        logger.level = 'debug';
+      }
       logger.info('Starting clawbridge run...');
       const config = await loadConfig(options.config);
       
