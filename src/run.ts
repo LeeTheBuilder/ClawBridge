@@ -1,13 +1,11 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import { Config } from './config';
 import { uploadToVault } from './vault';
 import { logger } from './logger';
-
-const execAsync = promisify(exec);
+import { buildDiscoveryJob } from './prompts';
+import { executeDiscovery, DiscoveryResult } from './openclaw';
 
 export interface ConnectionBrief {
   workspace_id: string;
@@ -19,6 +17,7 @@ export interface ConnectionBrief {
     pages_fetched: number;
     candidates_evaluated: number;
     skill_version: string;
+    discovery_source?: string;
   };
   candidates: Candidate[];
   next_actions: NextAction[];
@@ -67,7 +66,7 @@ export interface RunOptions {
 }
 
 /**
- * Execute the clawbridge discovery and process results
+ * Execute Clawbridge discovery and process results
  */
 export async function runSkill(options: RunOptions): Promise<ConnectionBrief> {
   const { config, outputDir, dryRun, profile } = options;
@@ -94,19 +93,15 @@ export async function runSkill(options: RunOptions): Promise<ConnectionBrief> {
     logger.info('Dry run - generating sample output');
     brief = generateSampleBrief(config.workspace_id, runId, profileHash);
   } else {
-    // Real discovery via OpenClaw
-    brief = await executeDiscovery(config, runId, profileHash);
+    // Real discovery via OpenClaw/Clawdbot/Moltbot
+    brief = await executeRealDiscovery(config, runId, profileHash);
   }
   
   // Calculate run duration
   const durationSeconds = (Date.now() - startTime) / 1000;
-  brief.run_metadata = {
-    searches_performed: brief.run_metadata?.searches_performed || 0,
-    pages_fetched: brief.run_metadata?.pages_fetched || 0,
-    candidates_evaluated: brief.run_metadata?.candidates_evaluated || 0,
-    duration_seconds: durationSeconds,
-    skill_version: '1.0.0',
-  };
+  if (brief.run_metadata) {
+    brief.run_metadata.duration_seconds = durationSeconds;
+  }
   
   // Ensure output directory exists
   const outputPath = path.resolve(outputDir);
@@ -162,6 +157,7 @@ export async function runSkill(options: RunOptions): Promise<ConnectionBrief> {
   console.log(`JSON_PATH=${jsonPath}`);
   console.log(`MD_PATH=${mdPath}`);
   console.log(`CANDIDATES_COUNT=${brief.candidates.length}`);
+  console.log(`DISCOVERY_SOURCE=${brief.run_metadata?.discovery_source || 'unknown'}`);
   if (vaultUrl) {
     console.log(`VAULT_URL=${vaultUrl}`);
   }
@@ -181,244 +177,60 @@ export async function runSkill(options: RunOptions): Promise<ConnectionBrief> {
 }
 
 /**
- * Check if OpenClaw CLI is available
+ * Execute real discovery using OpenClaw/Clawdbot/Moltbot
  */
-async function checkOpenClaw(): Promise<boolean> {
-  try {
-    await execAsync('openclaw --version');
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Execute real discovery via OpenClaw batch execution
- */
-async function executeDiscovery(
+async function executeRealDiscovery(
   config: Config, 
   runId: string, 
   profileHash: string
 ): Promise<ConnectionBrief> {
-  logger.info('Starting discovery via OpenClaw');
+  logger.info('Building discovery job');
   
-  // Check if OpenClaw is available
-  const hasOpenClaw = await checkOpenClaw();
+  // Build the discovery job with runner-controlled prompts
+  const job = buildDiscoveryJob(config);
   
-  if (!hasOpenClaw) {
-    logger.warn('OpenClaw not installed - using simulated discovery');
-    logger.info('To enable real discovery, install OpenClaw:');
-    logger.info('  npm install -g openclaw@latest');
-    logger.info('  openclaw onboard --install-daemon');
-    logger.info('  openclaw skills install claw-clawbridge');
-    
-    // Fall back to simulated discovery for now
-    return executeSimulatedDiscovery(config, runId, profileHash);
-  }
+  // Calculate timeout
+  const timeoutMs = (config.run_budget?.max_minutes || 10) * 60 * 1000;
   
-  // Create job input for OpenClaw
-  const jobInput = {
-    profile: {
-      offer: config.project_profile.offer,
-      ask: config.project_profile.ask,
-      ideal_persona: config.project_profile.ideal_persona,
-      verticals: config.project_profile.verticals,
-      tone: config.project_profile.tone,
-      disallowed: config.project_profile.disallowed,
-    },
-    budget: {
-      max_searches: config.run_budget?.max_searches || 20,
-      max_fetches: config.run_budget?.max_fetches || 50,
-      max_minutes: config.run_budget?.max_minutes || 10,
-    },
-    constraints: {
-      top_k: config.constraints?.top_k || 5,
-      recency_days: config.constraints?.recency_days || 14,
-      min_evidence: config.constraints?.min_evidence || 2,
-    },
-    workspace_id: config.workspace_id,
-    run_id: runId,
-    profile_hash: profileHash,
-  };
+  // Execute discovery with fallback chain
+  const result = await executeDiscovery(job, timeoutMs);
   
-  // Write job input to temp file
-  const tmpDir = path.join(process.cwd(), '.clawbridge-tmp');
-  if (!fs.existsSync(tmpDir)) {
-    fs.mkdirSync(tmpDir, { recursive: true });
-  }
-  
-  const jobPath = path.join(tmpDir, 'job.json');
-  const resultPath = path.join(tmpDir, 'result.json');
-  
-  fs.writeFileSync(jobPath, JSON.stringify(jobInput, null, 2));
-  
-  try {
-    logger.info('Invoking OpenClaw agent', { skill: 'claw-clawbridge' });
-    
-    // Call OpenClaw non-interactively
-    // Note: OpenClaw CLI syntax may vary; adapt as needed
-    const { stdout, stderr } = await execAsync(
-      `openclaw agent --skill claw-clawbridge --input "${jobPath}" --output "${resultPath}" --non-interactive`,
-      { timeout: (config.run_budget?.max_minutes || 10) * 60 * 1000 }
-    );
-    
-    if (stderr) {
-      logger.debug('OpenClaw stderr', { stderr });
-    }
-    
-    // Read and parse result
-    if (!fs.existsSync(resultPath)) {
-      throw new Error('OpenClaw did not produce output file');
-    }
-    
-    const resultContent = fs.readFileSync(resultPath, 'utf-8');
-    const result = JSON.parse(resultContent);
-    
-    // Map OpenClaw result to ConnectionBrief format
-    const brief: ConnectionBrief = {
-      workspace_id: config.workspace_id,
-      run_id: runId,
-      project_profile_hash: profileHash,
-      run_metadata: result.metadata || {
-        duration_seconds: 0,
-        searches_performed: 0,
-        pages_fetched: 0,
-        candidates_evaluated: 0,
-        skill_version: '1.0.0',
-      },
-      candidates: result.candidates || [],
-      next_actions: result.next_actions || [],
-      summary: result.summary || {
-        headline: `Found ${result.candidates?.length || 0} candidates`,
-        key_insights: [],
-        venues_searched: [],
-      },
-    };
-    
-    // Clean up temp files
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-    
-    return brief;
-    
-  } catch (error: any) {
-    // Clean up temp files on error
-    if (fs.existsSync(tmpDir)) {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-    
-    if (error.message.includes('ETIMEDOUT') || error.killed) {
-      logger.error('OpenClaw execution timed out', { minutes: config.run_budget?.max_minutes || 10 });
-    } else {
-      logger.warn('OpenClaw execution failed, falling back to simulated discovery', { 
-        error: error.message 
-      });
-    }
-    
-    // Fall back to simulated discovery
-    return executeSimulatedDiscovery(config, runId, profileHash);
-  }
-}
-
-/**
- * Simulated discovery (used when OpenClaw is not available)
- */
-function executeSimulatedDiscovery(
-  config: Config, 
-  runId: string, 
-  profileHash: string
-): ConnectionBrief {
-  logger.info('Running simulated discovery (OpenClaw not available)');
-  
-  return {
+  // Map result to ConnectionBrief format
+  const brief: ConnectionBrief = {
     workspace_id: config.workspace_id,
     run_id: runId,
     project_profile_hash: profileHash,
     run_metadata: {
-      duration_seconds: 4.2,
-      searches_performed: 8,
-      pages_fetched: 12,
-      candidates_evaluated: 15,
-      skill_version: '1.0.0',
+      duration_seconds: 0, // Will be filled in later
+      searches_performed: result.metadata.searches_performed,
+      pages_fetched: result.metadata.pages_fetched,
+      candidates_evaluated: result.metadata.candidates_evaluated,
+      skill_version: '2.0.0',
+      discovery_source: result.source,
     },
-    candidates: [
-      {
-        name: 'Sarah Jenkins',
-        handle: '@sjenkins_growth',
-        role: 'Head of Growth',
-        company: 'CloudScale AI',
-        why_match: [
-          'Explicitly stated interest in B2B content partnerships',
-          'Recently launched a new vertical matching your core offering',
-          'Active engagement in SaaS communities within last 4 days'
-        ],
-        evidence_urls: [
-          'https://linkedin.com/in/sjenkins-growth',
-          'https://cloudscale.ai/about'
-        ],
-        risk_flags: [],
-        scores: {
-          relevance: 95,
-          intent: 88,
-          credibility: 90,
-          recency: 98,
-          engagement: 85,
-          final_score: 92.2,
-        },
-        last_activity: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        suggested_intro: "Hi Sarah,\n\nI saw your recent content about CloudScale's new vertical. We've helped similar Series B teams automate this exact workflow.\n\nWould you be open to a 10-minute intro call?",
-        suggested_followup: "Hi Sarah, following up on my note - would love to share a quick case study if you're still scouting partners.",
-      },
-      {
-        name: 'Marcus Thorne',
-        handle: '@mthorne_dev',
-        role: 'Founder',
-        company: 'StackFlow Solutions',
-        why_match: [
-          'Matches ideal persona (Technical Founder)',
-          'High credibility with verified LinkedIn presence',
-        ],
-        evidence_urls: [
-          'https://linkedin.com/in/mthorne',
-          'https://stackflow.io/about'
-        ],
-        risk_flags: ['low_evidence'],
-        scores: {
-          relevance: 82,
-          intent: 65,
-          credibility: 92,
-          recency: 70,
-          engagement: 60,
-          final_score: 76.5,
-        },
-        last_activity: new Date(Date.now() - 12 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        suggested_intro: "Hi Marcus,\n\nImpressive work on StackFlow's latest release. Given your focus on automation, I thought our content ops framework might be of interest.",
-        suggested_followup: "Hi Marcus, just circling back to see if StackFlow is looking at content automation this quarter.",
-      }
-    ],
-    next_actions: [
-      {
-        candidate_handle: '@sjenkins_growth',
-        action: 'reach_out',
-        reason: 'Perfect match with high intent signal',
-        priority: 'high',
-      },
-      {
-        candidate_handle: '@mthorne_dev',
-        action: 'research_more',
-        reason: 'Strong credibility but low intent evidence',
-        priority: 'medium',
-      }
-    ],
-    summary: {
-      headline: 'Found 2 high-quality matches (simulated - install OpenClaw for real discovery)',
-      key_insights: [
-        'High partnership intent detected in AI vertical',
-        'Found 1 immediate reach-out opportunity',
-        'Note: Install OpenClaw for real discovery'
-      ],
-      venues_searched: ['linkedin', 'web'],
-    },
+    candidates: result.candidates.map(c => ({
+      name: c.name,
+      handle: c.handle,
+      role: c.role,
+      company: c.company,
+      why_match: c.why_match || [],
+      evidence_urls: c.evidence_urls || [],
+      risk_flags: c.risk_flags,
+      scores: c.scores,
+      last_activity: c.last_activity,
+      suggested_intro: c.suggested_intro || '',
+      suggested_followup: c.suggested_followup,
+    })),
+    next_actions: result.candidates.map(c => ({
+      candidate_handle: c.handle || c.name,
+      action: c.scores?.final_score >= 80 ? 'reach_out' : 'research_more',
+      reason: c.scores?.final_score >= 80 ? 'High match score' : 'Needs more research',
+      priority: c.scores?.final_score >= 80 ? 'high' : 'medium',
+    })),
+    summary: result.summary,
   };
+  
+  return brief;
 }
 
 /**
@@ -447,7 +259,8 @@ function generateSampleBrief(
       searches_performed: 15,
       pages_fetched: 42,
       candidates_evaluated: 28,
-      skill_version: '1.0.0',
+      skill_version: '2.0.0',
+      discovery_source: 'dry_run',
     },
     candidates: [
       {
@@ -502,6 +315,7 @@ function generateMarkdownReport(brief: ConnectionBrief, config: Config): string 
   lines.push('# Connection Brief\n');
   lines.push(`**Workspace:** ${brief.workspace_id}  `);
   lines.push(`**Run Date:** ${new Date(brief.run_id).toLocaleString()}  `);
+  lines.push(`**Discovery Source:** ${brief.run_metadata?.discovery_source || 'unknown'}  `);
   lines.push('');
   lines.push('---\n');
   
@@ -530,6 +344,7 @@ function generateMarkdownReport(brief: ConnectionBrief, config: Config): string 
     lines.push(`- Searches: ${brief.run_metadata.searches_performed}`);
     lines.push(`- Pages fetched: ${brief.run_metadata.pages_fetched}`);
     lines.push(`- Candidates evaluated: ${brief.run_metadata.candidates_evaluated}`);
+    lines.push(`- Source: ${brief.run_metadata.discovery_source}`);
     lines.push('');
   }
   
@@ -609,7 +424,7 @@ function generateMarkdownReport(brief: ConnectionBrief, config: Config): string 
   lines.push('⚠️ **No Auto-Send**  ');
   lines.push('This system does not automatically send messages.\n');
   lines.push('---\n');
-  lines.push(`*Generated by clawbridge-runner v1.0.0*`);
+  lines.push(`*Generated by clawbridge-runner v2.0.0*`);
   
   return lines.join('\n');
 }
