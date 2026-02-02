@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://clawbridge.dev/schemas/connection_brief.json",
+  "$id": "https://clawbridge.cloud/schemas/connection_brief.json",
   "title": "Connection Brief",
   "description": "Structured output from a clawbridge scouting run",
   "type": "object",
@@ -8,8 +8,8 @@
   "properties": {
     "workspace_id": {
       "type": "string",
-      "pattern": "^ws_[a-zA-Z0-9]+$",
-      "description": "Unique identifier for the workspace (agency/project)"
+      "minLength": 1,
+      "description": "Unique identifier for the workspace (e.g. Firestore document ID)"
     },
     "run_id": {
       "type": "string",

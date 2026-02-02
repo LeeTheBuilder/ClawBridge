@@ -1,7 +1,7 @@
 # Clawbridge Runner Configuration
 # Copy this file to config.yml and customize for your workspace
 
-# Required: Your workspace ID from clawbridge.dev
+# Required: Your workspace ID from clawbridge.cloud
 workspace_id: "ws_your_workspace_id"
 
 # Required: Project profile - describes what you offer and what you're looking for
@@ -82,10 +82,10 @@ delivery:
   #   to:
   #     - "team@example.com"
 
-# Optional: Vault integration (upload runs to clawbridge.dev)
+# Optional: Vault integration (upload runs to clawbridge.cloud)
 vault:
   enabled: false
-  api_url: "https://clawbridge.dev/api"
+  api_url: "https://clawbridge.cloud/api"
   # workspace_token is read from CLAWBRIDGE_WORKSPACE_TOKEN env var
 
 # Optional: Output settings

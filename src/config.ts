@@ -209,7 +209,7 @@ export async function loadConfig(configPath: string): Promise<Config> {
 
 export function generateExampleConfig(): string {
   const example: Config = {
-    workspace_id: 'ws_your_workspace_id',
+    workspace_id: 'your_workspace_id',
     project_profile: {
       offer: 'We help B2B SaaS companies automate their content operations',
       ask: 'Marketing partners, agency relationships, content-focused companies',
@@ -248,7 +248,7 @@ export function generateExampleConfig(): string {
     },
     vault: {
       enabled: false,
-      api_url: 'https://clawbridge.dev/api',
+      api_url: 'https://clawbridge.cloud/api',
     },
     output: {
       dir: './output',

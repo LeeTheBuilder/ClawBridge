@@ -114,12 +114,12 @@ jobs:
             ### Quick Install
 
             ```bash
-            curl -fsSL https://clawbridge.dev/install | bash
+            curl -fsSL https://clawbridge.cloud/install | bash
             ```
 
             Or using wget:
             ```bash
-            wget -qO- https://clawbridge.dev/install | bash
+            wget -qO- https://clawbridge.cloud/install | bash
             ```
 
             ### Manual Download
@@ -155,7 +155,7 @@ jobs:
             ### Quick Start
 
             ```bash
-            clawbridge link CB-XXXXXX   # Use connect code from clawbridge.dev
+            clawbridge link CB-XXXXXX   # Use connect code from clawbridge.cloud
             clawbridge run               # Run the skill
             ```
 

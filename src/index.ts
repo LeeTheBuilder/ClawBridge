@@ -161,9 +161,9 @@ program
 
 program
   .command('link <code>')
-  .description('Link a workspace using a connect code from clawbridge.dev')
+  .description('Link a workspace using a connect code from clawbridge.cloud')
   .option('-d, --dir <path>', `Directory to create config in (default: ${getConfigDir()})`)
-  .option('--api-url <url>', 'API URL for resolving connect codes', 'https://clawbridge.dev')
+  .option('--api-url <url>', 'API URL for resolving connect codes', 'https://clawbridge.cloud')
   .action(async (code, options) => {
     try {
       const { linkWorkspace } = await import('./link');

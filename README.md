@@ -6,7 +6,7 @@ CLI runner for the claw-clawbridge skill. Executes nightly and delivers Connecti
 
 - **Scheduled Runs** - Cron-based scheduling for nightly execution
 - **Multi-Channel Delivery** - Discord, Slack, and Email support
-- **Vault Integration** - Optional upload to clawbridge.dev vault
+- **Vault Integration** - Optional upload to clawbridge.cloud vault
 - **Local Storage** - JSON and Markdown outputs saved locally
 - **Dry Run Mode** - Test without actual execution
 
@@ -151,7 +151,7 @@ clawbridge test-delivery --channel discord
 ### Full Configuration Reference
 
 ```yaml
-# Required: Your workspace ID from clawbridge.dev
+# Required: Your workspace ID from clawbridge.cloud
 workspace_id: "ws_your_workspace_id"
 
 # Required: Project profile
@@ -214,7 +214,7 @@ delivery:
 # Optional: Vault integration
 vault:
   enabled: false
-  api_url: "https://clawbridge.dev/api"
+  api_url: "https://clawbridge.cloud/api"
 
 # Optional: Output settings
 output:

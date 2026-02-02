@@ -98,11 +98,11 @@ export function validateHardRules(brief: ConnectionBrief): ValidationResult {
     }
   }
 
-  // Rule: workspace_id must be present and formatted
-  if (!brief.workspace_id || !brief.workspace_id.startsWith('ws_')) {
+  // Rule: workspace_id must be present and non-empty
+  if (!brief.workspace_id || typeof brief.workspace_id !== 'string' || !brief.workspace_id.trim()) {
     errors.push({
       path: '/workspace_id',
-      message: 'workspace_id must start with "ws_"',
+      message: 'workspace_id is required',
     });
   }
 

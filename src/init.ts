@@ -33,7 +33,7 @@ export async function initConfig(targetDir: string): Promise<void> {
     const envContent = `# Clawbridge Runner Configuration
 # Copy this file to .env and fill in your values
 
-# Workspace token (from clawbridge.dev)
+# Workspace token (from clawbridge.cloud)
 CLAWBRIDGE_WORKSPACE_TOKEN=
 
 # Discord delivery (choose one)

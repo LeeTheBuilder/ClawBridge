@@ -155,15 +155,6 @@ function checkWorkspaceId(config: Config): CheckResult {
     };
   }
   
-  if (!config.workspace_id.startsWith('ws_')) {
-    return {
-      name: 'Workspace ID',
-      status: 'warn',
-      message: `Format may be incorrect: ${config.workspace_id}`,
-      fix: 'Workspace IDs typically start with "ws_"',
-    };
-  }
-  
   return {
     name: 'Workspace ID',
     status: 'pass',

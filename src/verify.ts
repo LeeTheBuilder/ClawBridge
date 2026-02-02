@@ -27,7 +27,7 @@ export async function verifyVault(configPath: string): Promise<void> {
     return;
   }
 
-  const apiUrl = config.vault.api_url || 'https://clawbridge.dev';
+  const apiUrl = config.vault.api_url || 'https://clawbridge.cloud';
   const apiKey = config.workspace_key || config.vault.workspace_key;
 
   if (!apiKey) {
