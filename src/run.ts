@@ -126,30 +126,60 @@ export async function runSkill(options: RunOptions): Promise<ConnectionBrief> {
   // Create/update latest symlinks
   createLatestLinks(outputPath, jsonPath, mdPath);
   
-  // Deliver to configured channel
-  if (options.deliver && !dryRun) {
-    logger.info('Delivering results', { target: config.delivery.target });
-    await deliver(brief, config);
-  }
-  
-  // Upload to vault
+  // Upload to vault first (so we can include URL in delivery)
   let vaultUrl: string | undefined;
   if (options.upload && config.vault?.enabled && !dryRun) {
     logger.info('Uploading to vault');
-    const uploadResult = await uploadToVault(brief, config);
-    if (uploadResult) {
-      vaultUrl = uploadResult.vaultUrl;
-      logger.info('Vault URL:', { vaultUrl });
+    try {
+      const uploadResult = await uploadToVault(brief, config);
+      if (uploadResult) {
+        vaultUrl = uploadResult.vaultUrl;
+        logger.info('Vault upload successful', { vaultUrl });
+      }
+    } catch (error: any) {
+      logger.error('Vault upload failed', { error: error.message });
+      // Continue - don't fail the entire run
     }
   }
 
   // Store vault URL for delivery
   (brief as any)._vaultUrl = vaultUrl;
+
+  // Deliver to configured channel (non-fatal if fails)
+  let deliverySuccess = false;
+  if (options.deliver && !dryRun) {
+    deliverySuccess = await deliver(brief, config);
+  }
   
   // Clean up old runs
   if (config.output?.keep_runs) {
     cleanupOldRuns(outputPath, config.output.keep_runs);
   }
+
+  // === Machine-readable output for OpenClaw integration ===
+  console.log('');
+  console.log('─'.repeat(60));
+  console.log('');
+  console.log('📋 RUN COMPLETE');
+  console.log('');
+  console.log(`JSON_PATH=${jsonPath}`);
+  console.log(`MD_PATH=${mdPath}`);
+  console.log(`CANDIDATES_COUNT=${brief.candidates.length}`);
+  if (vaultUrl) {
+    console.log(`VAULT_URL=${vaultUrl}`);
+  }
+  console.log(`DELIVERY=${deliverySuccess ? 'ok' : 'skipped'}`);
+  console.log('');
+  
+  // Human-readable summary
+  if (brief.summary) {
+    console.log(`✅ ${brief.summary.headline}`);
+  }
+  if (vaultUrl) {
+    console.log(`🔗 View results: ${vaultUrl}`);
+  }
+  console.log('');
+  console.log('─'.repeat(60));
   
   return brief;
 }

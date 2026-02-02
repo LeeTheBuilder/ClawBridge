@@ -166,6 +166,20 @@ program
     }
   });
 
+program
+  .command('verify')
+  .description('Verify vault connection and credentials')
+  .option('-c, --config <path>', 'Path to config file', './config.yml')
+  .action(async (options) => {
+    try {
+      const { verifyVault } = await import('./verify');
+      await verifyVault(options.config);
+    } catch (error) {
+      logger.error('Verification failed:', error);
+      process.exit(1);
+    }
+  });
+
 program.parse(process.argv);
 
 // Show help if no command provided

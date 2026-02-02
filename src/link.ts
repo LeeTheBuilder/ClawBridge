@@ -168,10 +168,14 @@ export async function linkWorkspace(code: string, options: LinkOptions): Promise
       ideal_persona: 'Your ideal contact (e.g., VP Marketing at Series A-C startups)',
       verticals: ['Your', 'industry', 'keywords'],
     },
-    delivery: {
-      target: 'discord',
-      discord: discordWebhook ? { webhook_url: discordWebhook } : { channel_id: 'YOUR_CHANNEL_ID' },
-    },
+    delivery: discordWebhook 
+      ? {
+          target: 'discord',
+          discord: { webhook_url: discordWebhook },
+        }
+      : {
+          target: 'none',  // Default to no delivery - user can configure later
+        },
     vault: {
       enabled: true,
       api_url: linkData.vaultBaseUrl,

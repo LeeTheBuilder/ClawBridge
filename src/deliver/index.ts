@@ -7,30 +7,62 @@ import { logger } from '../logger';
 
 /**
  * Deliver a connection brief to the configured channel
+ * Returns true if delivery succeeded, false if skipped or failed (non-fatal)
  */
-export async function deliver(brief: ConnectionBrief, config: Config): Promise<void> {
+export async function deliver(brief: ConnectionBrief, config: Config): Promise<boolean> {
   const { target } = config.delivery;
+  
+  // Skip if delivery is set to 'none' or not configured
+  if (!target || target === 'none') {
+    logger.info('Delivery skipped (target=none)');
+    return false;
+  }
   
   logger.info('Delivering connection brief', { 
     target, 
     candidates: brief.candidates.length 
   });
   
-  switch (target) {
-    case 'discord':
-      await deliverDiscord(brief, config);
-      break;
-    case 'slack':
-      await deliverSlack(brief, config);
-      break;
-    case 'email':
-      await deliverEmail(brief, config);
-      break;
-    default:
-      throw new Error(`Unknown delivery target: ${target}`);
+  try {
+    switch (target) {
+      case 'discord':
+        // Check if Discord is properly configured
+        if (!config.delivery.discord?.webhook_url && 
+            !(config.delivery.discord?.bot_token && config.delivery.discord?.channel_id)) {
+          logger.warn('Discord delivery skipped - no webhook_url or bot_token+channel_id configured');
+          return false;
+        }
+        await deliverDiscord(brief, config);
+        break;
+      case 'slack':
+        if (!config.delivery.slack?.webhook_url && !config.delivery.slack?.bot_token) {
+          logger.warn('Slack delivery skipped - no webhook_url or bot_token configured');
+          return false;
+        }
+        await deliverSlack(brief, config);
+        break;
+      case 'email':
+        if (!config.delivery.email?.smtp_host || !config.delivery.email?.to) {
+          logger.warn('Email delivery skipped - SMTP not configured');
+          return false;
+        }
+        await deliverEmail(brief, config);
+        break;
+      default:
+        logger.warn(`Unknown delivery target: ${target}, skipping`);
+        return false;
+    }
+    
+    logger.info('Delivery completed', { target });
+    return true;
+  } catch (error: any) {
+    // Delivery failure is non-fatal - log warning and continue
+    logger.warn('Delivery failed (non-fatal)', { 
+      target, 
+      error: error.message 
+    });
+    return false;
   }
-  
-  logger.info('Delivery completed', { target });
 }
 
 /**

@@ -26,7 +26,7 @@ export interface Constraints {
 }
 
 export interface DeliveryConfig {
-  target: 'discord' | 'slack' | 'email';
+  target: 'discord' | 'slack' | 'email' | 'none';
   discord?: {
     webhook_url?: string;
     bot_token?: string;
@@ -119,12 +119,13 @@ export async function loadConfig(configPath: string): Promise<Config> {
     throw new Error('Config missing required field: project_profile.verticals');
   }
   
+  // Delivery is optional - default to 'none' if not specified
   if (!rawConfig.delivery) {
-    throw new Error('Config missing required field: delivery');
+    rawConfig.delivery = { target: 'none' };
   }
   
   if (!rawConfig.delivery.target) {
-    throw new Error('Config missing required field: delivery.target');
+    rawConfig.delivery.target = 'none';
   }
   
   // Apply defaults
