@@ -3,8 +3,11 @@
 import { Command } from 'commander';
 import { runSkill } from './run';
 import { startScheduler, stopScheduler } from './schedule';
-import { loadConfig } from './config';
+import { loadConfig, getDefaultConfigPath, getConfigDir } from './config';
 import { logger } from './logger';
+
+// Default config path is ~/.clawbridge/config.yml
+const DEFAULT_CONFIG = getDefaultConfigPath();
 
 const program = new Command();
 
@@ -16,8 +19,8 @@ program
 program
   .command('run')
   .description('Execute the clawbridge skill once')
-  .option('-c, --config <path>', 'Path to config file', './config.yml')
-  .option('-o, --output <dir>', 'Output directory for results', './output')
+  .option('-c, --config <path>', 'Path to config file', DEFAULT_CONFIG)
+  .option('-o, --output <dir>', 'Output directory for results')
   .option('--no-deliver', 'Skip delivery (Discord/Slack/Email)')
   .option('--no-upload', 'Skip vault upload')
   .option('--dry-run', 'Preview what would be done without executing')
@@ -26,9 +29,12 @@ program
       logger.info('Starting clawbridge run...');
       const config = await loadConfig(options.config);
       
+      // Use config's output dir if not specified, or default to ~/.clawbridge/output
+      const outputDir = options.output || config.output?.dir || `${getConfigDir()}/output`;
+      
       await runSkill({
         config,
-        outputDir: options.output,
+        outputDir,
         deliver: options.deliver !== false,
         upload: options.upload !== false,
         dryRun: options.dryRun || false,
@@ -44,7 +50,7 @@ program
 program
   .command('schedule')
   .description('Start the scheduler for periodic runs')
-  .option('-c, --config <path>', 'Path to config file', './config.yml')
+  .option('-c, --config <path>', 'Path to config file', DEFAULT_CONFIG)
   .option('--cron <expression>', 'Cron expression', '0 21 * * *')
   .action(async (options) => {
     try {
@@ -89,7 +95,7 @@ program
 program
   .command('test-delivery')
   .description('Test delivery configuration')
-  .option('-c, --config <path>', 'Path to config file', './config.yml')
+  .option('-c, --config <path>', 'Path to config file', DEFAULT_CONFIG)
   .option('--channel <type>', 'Delivery channel to test (discord, slack, email)', 'discord')
   .action(async (options) => {
     try {
@@ -106,7 +112,7 @@ program
 program
   .command('validate')
   .description('Validate configuration file')
-  .option('-c, --config <path>', 'Path to config file', './config.yml')
+  .option('-c, --config <path>', 'Path to config file', DEFAULT_CONFIG)
   .action(async (options) => {
     try {
       const config = await loadConfig(options.config);
@@ -122,7 +128,7 @@ program
 program
   .command('doctor')
   .description('Check system setup and configuration')
-  .option('-c, --config <path>', 'Path to config file', './config.yml')
+  .option('-c, --config <path>', 'Path to config file', DEFAULT_CONFIG)
   .action(async (options) => {
     try {
       const { runDoctor } = await import('./doctor');
@@ -151,13 +157,13 @@ program
 program
   .command('link <code>')
   .description('Link a workspace using a connect code from clawbridge.dev')
-  .option('-d, --dir <path>', 'Directory to create config in', '.')
+  .option('-d, --dir <path>', `Directory to create config in (default: ${getConfigDir()})`)
   .option('--api-url <url>', 'API URL for resolving connect codes', 'https://clawbridge.dev')
   .action(async (code, options) => {
     try {
       const { linkWorkspace } = await import('./link');
       await linkWorkspace(code, {
-        dir: options.dir,
+        dir: options.dir || getConfigDir(),
         apiUrl: options.apiUrl,
       });
     } catch (error) {
@@ -169,7 +175,7 @@ program
 program
   .command('verify')
   .description('Verify vault connection and credentials')
-  .option('-c, --config <path>', 'Path to config file', './config.yml')
+  .option('-c, --config <path>', 'Path to config file', DEFAULT_CONFIG)
   .action(async (options) => {
     try {
       const { verifyVault } = await import('./verify');

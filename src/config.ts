@@ -1,7 +1,41 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import * as yaml from 'js-yaml';
 import { logger } from './logger';
+
+/**
+ * Get the default clawbridge config directory
+ * Uses ~/.clawbridge/ on all platforms
+ */
+export function getConfigDir(): string {
+  return path.join(os.homedir(), '.clawbridge');
+}
+
+/**
+ * Get the default config file path
+ */
+export function getDefaultConfigPath(): string {
+  return path.join(getConfigDir(), 'config.yml');
+}
+
+/**
+ * Get the default .env file path
+ */
+export function getDefaultEnvPath(): string {
+  return path.join(getConfigDir(), '.env');
+}
+
+/**
+ * Ensure the config directory exists
+ */
+export function ensureConfigDir(): string {
+  const dir = getConfigDir();
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+}
 
 export interface ProjectProfile {
   offer: string;

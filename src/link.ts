@@ -4,6 +4,7 @@ import * as readline from 'readline';
 import * as yaml from 'js-yaml';
 import axios from 'axios';
 import { logger } from './logger';
+import { getConfigDir } from './config';
 
 interface LinkResponse {
   ok: boolean;
@@ -160,6 +161,10 @@ export async function linkWorkspace(code: string, options: LinkOptions): Promise
   const configPath = path.join(absolutePath, 'config.yml');
   const existingConfig = fs.existsSync(configPath);
   
+  // Determine output directory - use subdirectory of config dir
+  const isDefaultConfigDir = absolutePath === getConfigDir();
+  const outputDir = isDefaultConfigDir ? path.join(absolutePath, 'output') : './output';
+
   const config: any = {
     workspace_id: linkData.workspaceId,
     project_profile: {
@@ -181,7 +186,7 @@ export async function linkWorkspace(code: string, options: LinkOptions): Promise
       api_url: linkData.vaultBaseUrl,
     },
     output: {
-      dir: './output',
+      dir: outputDir,
       keep_runs: 30,
     },
   };
