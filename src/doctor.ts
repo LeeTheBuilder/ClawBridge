@@ -49,12 +49,7 @@ export async function runDoctor(configPath: string): Promise<void> {
     results.push(await checkVaultUrl(config.vault.api_url));
   }
 
-  // Check 6: Delivery configured
-  if (config) {
-    results.push(checkDeliveryConfig(config));
-  }
-
-  // Check 7: Output directory writable
+  // Check 6: Output directory writable
   if (config?.output?.dir) {
     results.push(checkOutputDir(config.output.dir));
   }
@@ -215,75 +210,6 @@ async function checkVaultUrl(apiUrl: string): Promise<CheckResult> {
       message: `Not reachable: ${apiUrl}`,
       fix: 'Check your internet connection and vault.api_url in config',
     };
-  }
-}
-
-function checkDeliveryConfig(config: Config): CheckResult {
-  const { delivery } = config;
-  
-  if (!delivery.target) {
-    return {
-      name: 'Delivery Configuration',
-      status: 'fail',
-      message: 'No delivery target configured',
-      fix: 'Add delivery.target to your config (discord, slack, or email)',
-    };
-  }
-  
-  switch (delivery.target) {
-    case 'discord':
-      if (delivery.discord?.webhook_url || 
-          (delivery.discord?.bot_token && delivery.discord?.channel_id)) {
-        return {
-          name: 'Delivery Configuration',
-          status: 'pass',
-          message: 'Discord delivery configured',
-        };
-      }
-      return {
-        name: 'Delivery Configuration',
-        status: 'fail',
-        message: 'Discord requires webhook_url or (bot_token + channel_id)',
-        fix: 'Add Discord webhook URL to delivery.discord.webhook_url',
-      };
-      
-    case 'slack':
-      if (delivery.slack?.webhook_url || delivery.slack?.bot_token) {
-        return {
-          name: 'Delivery Configuration',
-          status: 'pass',
-          message: 'Slack delivery configured',
-        };
-      }
-      return {
-        name: 'Delivery Configuration',
-        status: 'fail',
-        message: 'Slack requires webhook_url or bot_token',
-        fix: 'Add Slack webhook URL to delivery.slack.webhook_url',
-      };
-      
-    case 'email':
-      if (delivery.email?.smtp_host && delivery.email?.to) {
-        return {
-          name: 'Delivery Configuration',
-          status: 'pass',
-          message: 'Email delivery configured',
-        };
-      }
-      return {
-        name: 'Delivery Configuration',
-        status: 'fail',
-        message: 'Email requires SMTP configuration',
-        fix: 'Add SMTP settings to delivery.email',
-      };
-      
-    default:
-      return {
-        name: 'Delivery Configuration',
-        status: 'fail',
-        message: `Unknown delivery target: ${delivery.target}`,
-        fix: 'Use discord, slack, or email as delivery.target',
-      };
   }
 }
 

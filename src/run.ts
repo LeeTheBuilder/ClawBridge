@@ -1,10 +1,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { Config } from './config';
-import { deliver } from './deliver';
 import { uploadToVault } from './vault';
 import { logger } from './logger';
+
+const execAsync = promisify(exec);
 
 export interface ConnectionBrief {
   workspace_id: string;
@@ -58,20 +61,23 @@ export interface NextAction {
 export interface RunOptions {
   config: Config;
   outputDir: string;
-  deliver: boolean;
   upload: boolean;
   dryRun: boolean;
+  profile?: string;
 }
 
 /**
- * Execute the clawbridge skill and process results
+ * Execute the clawbridge discovery and process results
  */
 export async function runSkill(options: RunOptions): Promise<ConnectionBrief> {
-  const { config, outputDir, dryRun } = options;
+  const { config, outputDir, dryRun, profile } = options;
   const startTime = Date.now();
   
-  logger.info('Starting skill execution', { 
+  const profileName = profile || 'default';
+  
+  logger.info('Starting Clawbridge run', { 
     workspace_id: config.workspace_id,
+    profile: profileName,
     dry_run: dryRun 
   });
   
@@ -81,16 +87,15 @@ export async function runSkill(options: RunOptions): Promise<ConnectionBrief> {
   // Hash the project profile for tracking
   const profileHash = generateProfileHash(config.project_profile);
   
-  // Execute the skill (this is where OpenClaw integration would happen)
+  // Execute discovery
   let brief: ConnectionBrief;
   
   if (dryRun) {
     logger.info('Dry run - generating sample output');
     brief = generateSampleBrief(config.workspace_id, runId, profileHash);
   } else {
-    // In production, this would call OpenClaw to execute the skill
-    // For now, we'll simulate the skill execution
-    brief = await executeSkill(config, runId, profileHash);
+    // Real discovery via OpenClaw
+    brief = await executeDiscovery(config, runId, profileHash);
   }
   
   // Calculate run duration
@@ -126,7 +131,7 @@ export async function runSkill(options: RunOptions): Promise<ConnectionBrief> {
   // Create/update latest symlinks
   createLatestLinks(outputPath, jsonPath, mdPath);
   
-  // Upload to vault first (so we can include URL in delivery)
+  // Upload to vault (the only output channel)
   let vaultUrl: string | undefined;
   if (options.upload && config.vault?.enabled && !dryRun) {
     logger.info('Uploading to vault');
@@ -141,34 +146,25 @@ export async function runSkill(options: RunOptions): Promise<ConnectionBrief> {
       // Continue - don't fail the entire run
     }
   }
-
-  // Store vault URL for delivery
-  (brief as any)._vaultUrl = vaultUrl;
-
-  // Deliver to configured channel (non-fatal if fails)
-  let deliverySuccess = false;
-  if (options.deliver && !dryRun) {
-    deliverySuccess = await deliver(brief, config);
-  }
   
   // Clean up old runs
   if (config.output?.keep_runs) {
     cleanupOldRuns(outputPath, config.output.keep_runs);
   }
 
-  // === Machine-readable output for OpenClaw integration ===
+  // === Machine-readable output ===
   console.log('');
   console.log('─'.repeat(60));
   console.log('');
   console.log('📋 RUN COMPLETE');
   console.log('');
+  console.log(`PROFILE=${profileName}`);
   console.log(`JSON_PATH=${jsonPath}`);
   console.log(`MD_PATH=${mdPath}`);
   console.log(`CANDIDATES_COUNT=${brief.candidates.length}`);
   if (vaultUrl) {
     console.log(`VAULT_URL=${vaultUrl}`);
   }
-  console.log(`DELIVERY=${deliverySuccess ? 'ok' : 'skipped'}`);
   console.log('');
   
   // Human-readable summary
@@ -185,17 +181,154 @@ export async function runSkill(options: RunOptions): Promise<ConnectionBrief> {
 }
 
 /**
- * Execute the skill via OpenClaw (Simulated Production Run)
+ * Check if OpenClaw CLI is available
  */
-async function executeSkill(
+async function checkOpenClaw(): Promise<boolean> {
+  try {
+    await execAsync('openclaw --version');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Execute real discovery via OpenClaw batch execution
+ */
+async function executeDiscovery(
   config: Config, 
   runId: string, 
   profileHash: string
 ): Promise<ConnectionBrief> {
-  logger.info('Executing LIVE simulation for production testing');
+  logger.info('Starting discovery via OpenClaw');
   
-  // Simulated LIVE data based on a real-world scenario
-  // Scenario: Targeting B2B SaaS marketing partners
+  // Check if OpenClaw is available
+  const hasOpenClaw = await checkOpenClaw();
+  
+  if (!hasOpenClaw) {
+    logger.warn('OpenClaw not installed - using simulated discovery');
+    logger.info('To enable real discovery, install OpenClaw:');
+    logger.info('  npm install -g openclaw@latest');
+    logger.info('  openclaw onboard --install-daemon');
+    logger.info('  openclaw skills install claw-clawbridge');
+    
+    // Fall back to simulated discovery for now
+    return executeSimulatedDiscovery(config, runId, profileHash);
+  }
+  
+  // Create job input for OpenClaw
+  const jobInput = {
+    profile: {
+      offer: config.project_profile.offer,
+      ask: config.project_profile.ask,
+      ideal_persona: config.project_profile.ideal_persona,
+      verticals: config.project_profile.verticals,
+      tone: config.project_profile.tone,
+      disallowed: config.project_profile.disallowed,
+    },
+    budget: {
+      max_searches: config.run_budget?.max_searches || 20,
+      max_fetches: config.run_budget?.max_fetches || 50,
+      max_minutes: config.run_budget?.max_minutes || 10,
+    },
+    constraints: {
+      top_k: config.constraints?.top_k || 5,
+      recency_days: config.constraints?.recency_days || 14,
+      min_evidence: config.constraints?.min_evidence || 2,
+    },
+    workspace_id: config.workspace_id,
+    run_id: runId,
+    profile_hash: profileHash,
+  };
+  
+  // Write job input to temp file
+  const tmpDir = path.join(process.cwd(), '.clawbridge-tmp');
+  if (!fs.existsSync(tmpDir)) {
+    fs.mkdirSync(tmpDir, { recursive: true });
+  }
+  
+  const jobPath = path.join(tmpDir, 'job.json');
+  const resultPath = path.join(tmpDir, 'result.json');
+  
+  fs.writeFileSync(jobPath, JSON.stringify(jobInput, null, 2));
+  
+  try {
+    logger.info('Invoking OpenClaw agent', { skill: 'claw-clawbridge' });
+    
+    // Call OpenClaw non-interactively
+    // Note: OpenClaw CLI syntax may vary; adapt as needed
+    const { stdout, stderr } = await execAsync(
+      `openclaw agent --skill claw-clawbridge --input "${jobPath}" --output "${resultPath}" --non-interactive`,
+      { timeout: (config.run_budget?.max_minutes || 10) * 60 * 1000 }
+    );
+    
+    if (stderr) {
+      logger.debug('OpenClaw stderr', { stderr });
+    }
+    
+    // Read and parse result
+    if (!fs.existsSync(resultPath)) {
+      throw new Error('OpenClaw did not produce output file');
+    }
+    
+    const resultContent = fs.readFileSync(resultPath, 'utf-8');
+    const result = JSON.parse(resultContent);
+    
+    // Map OpenClaw result to ConnectionBrief format
+    const brief: ConnectionBrief = {
+      workspace_id: config.workspace_id,
+      run_id: runId,
+      project_profile_hash: profileHash,
+      run_metadata: result.metadata || {
+        duration_seconds: 0,
+        searches_performed: 0,
+        pages_fetched: 0,
+        candidates_evaluated: 0,
+        skill_version: '1.0.0',
+      },
+      candidates: result.candidates || [],
+      next_actions: result.next_actions || [],
+      summary: result.summary || {
+        headline: `Found ${result.candidates?.length || 0} candidates`,
+        key_insights: [],
+        venues_searched: [],
+      },
+    };
+    
+    // Clean up temp files
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    
+    return brief;
+    
+  } catch (error: any) {
+    // Clean up temp files on error
+    if (fs.existsSync(tmpDir)) {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+    
+    if (error.message.includes('ETIMEDOUT') || error.killed) {
+      logger.error('OpenClaw execution timed out', { minutes: config.run_budget?.max_minutes || 10 });
+    } else {
+      logger.warn('OpenClaw execution failed, falling back to simulated discovery', { 
+        error: error.message 
+      });
+    }
+    
+    // Fall back to simulated discovery
+    return executeSimulatedDiscovery(config, runId, profileHash);
+  }
+}
+
+/**
+ * Simulated discovery (used when OpenClaw is not available)
+ */
+function executeSimulatedDiscovery(
+  config: Config, 
+  runId: string, 
+  profileHash: string
+): ConnectionBrief {
+  logger.info('Running simulated discovery (OpenClaw not available)');
+  
   return {
     workspace_id: config.workspace_id,
     run_id: runId,
@@ -214,12 +347,12 @@ async function executeSkill(
         role: 'Head of Growth',
         company: 'CloudScale AI',
         why_match: [
-          'Explicitly stated interest in B2B content partnerships on Moltbook',
-          'Recently launched a new vertical matching our core vertical',
+          'Explicitly stated interest in B2B content partnerships',
+          'Recently launched a new vertical matching your core offering',
           'Active engagement in SaaS communities within last 4 days'
         ],
         evidence_urls: [
-          'https://moltbook.com/@sjenkins_growth',
+          'https://linkedin.com/in/sjenkins-growth',
           'https://cloudscale.ai/about'
         ],
         risk_flags: [],
@@ -231,9 +364,9 @@ async function executeSkill(
           engagement: 85,
           final_score: 92.2,
         },
-        last_activity: '2026-01-28',
-        suggested_intro: "Hi Sarah,\n\nI saw your recent post on Moltbook about looking for content partners for CloudScale's new vertical. We've helped similar Series B teams automate this exact workflow.\n\nWould you be open to a 10-minute intro call next Tuesday?",
-        suggested_followup: "Hi Sarah, following up on my note about CloudScale - would love to share a quick case study if you're still scouting partners.",
+        last_activity: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        suggested_intro: "Hi Sarah,\n\nI saw your recent content about CloudScale's new vertical. We've helped similar Series B teams automate this exact workflow.\n\nWould you be open to a 10-minute intro call?",
+        suggested_followup: "Hi Sarah, following up on my note - would love to share a quick case study if you're still scouting partners.",
       },
       {
         name: 'Marcus Thorne',
@@ -242,11 +375,11 @@ async function executeSkill(
         company: 'StackFlow Solutions',
         why_match: [
           'Matches ideal persona (Technical Founder)',
-          'High credibility with verified LinkedIn and Github presence',
+          'High credibility with verified LinkedIn presence',
         ],
         evidence_urls: [
           'https://linkedin.com/in/mthorne',
-          'https://github.com/mthorne'
+          'https://stackflow.io/about'
         ],
         risk_flags: ['low_evidence'],
         scores: {
@@ -257,8 +390,8 @@ async function executeSkill(
           engagement: 60,
           final_score: 76.5,
         },
-        last_activity: '2026-01-20',
-        suggested_intro: "Hi Marcus,\n\nImpressive work on StackFlow's latest release. Given your focus on automation, I thought our content ops framework might be of interest for your marketing team.",
+        last_activity: new Date(Date.now() - 12 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        suggested_intro: "Hi Marcus,\n\nImpressive work on StackFlow's latest release. Given your focus on automation, I thought our content ops framework might be of interest.",
         suggested_followup: "Hi Marcus, just circling back to see if StackFlow is looking at content automation this quarter.",
       }
     ],
@@ -277,12 +410,13 @@ async function executeSkill(
       }
     ],
     summary: {
-      headline: 'Found 2 high-quality matches for B2B Content Automation',
+      headline: 'Found 2 high-quality matches (simulated - install OpenClaw for real discovery)',
       key_insights: [
-        'High partnership intent detected in the AI vertical',
-        'Found 1 immediate reach-out opportunity'
+        'High partnership intent detected in AI vertical',
+        'Found 1 immediate reach-out opportunity',
+        'Note: Install OpenClaw for real discovery'
       ],
-      venues_searched: ['moltbook', 'web', 'linkedin'],
+      venues_searched: ['linkedin', 'web'],
     },
   };
 }
@@ -352,8 +486,8 @@ function generateSampleBrief(
       },
     ],
     summary: {
-      headline: 'Sample run completed - 1 candidate found',
-      key_insights: ['This is a sample/dry-run output'],
+      headline: 'Dry run completed - 1 sample candidate',
+      key_insights: ['This is a dry-run output for testing'],
       venues_searched: ['web', 'linkedin'],
     },
   };

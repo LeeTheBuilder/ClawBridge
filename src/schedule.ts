@@ -44,7 +44,6 @@ export function startScheduler(options: SchedulerOptions): void {
         await runSkill({
           config,
           outputDir: config.output?.dir || './output',
-          deliver: true,
           upload: config.vault?.enabled || false,
           dryRun: false,
         });
@@ -108,7 +107,6 @@ export async function triggerImmediateRun(config: Config): Promise<void> {
     await runSkill({
       config,
       outputDir: config.output?.dir || './output',
-      deliver: true,
       upload: config.vault?.enabled || false,
       dryRun: false,
     });

@@ -2,7 +2,6 @@
 
 import { Command } from 'commander';
 import * as dotenv from 'dotenv';
-import * as path from 'path';
 import { runSkill } from './run';
 import { startScheduler, stopScheduler } from './schedule';
 import { loadConfig, getDefaultConfigPath, getConfigDir, getDefaultEnvPath } from './config';
@@ -18,15 +17,15 @@ const program = new Command();
 
 program
   .name('clawbridge')
-  .description('CLI runner for claw-clawbridge skill')
+  .description('CLI runner for Clawbridge - find high-quality business connections')
   .version('1.0.0');
 
 program
   .command('run')
-  .description('Execute the clawbridge skill once')
+  .description('Execute Clawbridge discovery and upload results to Vault')
   .option('-c, --config <path>', 'Path to config file', DEFAULT_CONFIG)
   .option('-o, --output <dir>', 'Output directory for results')
-  .option('--no-deliver', 'Skip delivery (Discord/Slack/Email)')
+  .option('-p, --profile <name>', 'Profile name to use (default: default)')
   .option('--no-upload', 'Skip vault upload')
   .option('--dry-run', 'Preview what would be done without executing')
   .action(async (options) => {
@@ -40,9 +39,9 @@ program
       await runSkill({
         config,
         outputDir,
-        deliver: options.deliver !== false,
         upload: options.upload !== false,
         dryRun: options.dryRun || false,
+        profile: options.profile,
       });
       
       logger.info('Run completed successfully');
@@ -98,23 +97,6 @@ program
   });
 
 program
-  .command('test-delivery')
-  .description('Test delivery configuration')
-  .option('-c, --config <path>', 'Path to config file', DEFAULT_CONFIG)
-  .option('--channel <type>', 'Delivery channel to test (discord, slack, email)', 'discord')
-  .action(async (options) => {
-    try {
-      const config = await loadConfig(options.config);
-      const { testDelivery } = await import('./deliver');
-      await testDelivery(config, options.channel);
-      logger.info('Delivery test completed');
-    } catch (error) {
-      logger.error('Delivery test failed:', error);
-      process.exit(1);
-    }
-  });
-
-program
   .command('validate')
   .description('Validate configuration file')
   .option('-c, --config <path>', 'Path to config file', DEFAULT_CONFIG)
@@ -123,7 +105,6 @@ program
       const config = await loadConfig(options.config);
       logger.info('Configuration is valid');
       logger.info('Workspace ID:', config.workspace_id);
-      logger.info('Delivery target:', config.delivery.target);
     } catch (error) {
       logger.error('Configuration validation failed:', error);
       process.exit(1);
@@ -140,21 +121,6 @@ program
       await runDoctor(options.config);
     } catch (error) {
       logger.error('Doctor check failed:', error);
-      process.exit(1);
-    }
-  });
-
-program
-  .command('install-skill')
-  .description('Install the clawbridge skill from GitHub')
-  .option('-d, --dir <path>', 'Target directory for skill installation', '.')
-  .option('--url <url>', 'Custom GitHub URL for the skill', 'https://github.com/clawbridge/clawbridge-skill')
-  .action(async (options) => {
-    try {
-      const { installSkill } = await import('./install-skill');
-      await installSkill(options.dir, options.url);
-    } catch (error) {
-      logger.error('Skill installation failed:', error);
       process.exit(1);
     }
   });
@@ -187,6 +153,24 @@ program
       await verifyVault(options.config);
     } catch (error) {
       logger.error('Verification failed:', error);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('profiles')
+  .description('List available profiles')
+  .option('-c, --config <path>', 'Path to config file', DEFAULT_CONFIG)
+  .action(async (options) => {
+    try {
+      const config = await loadConfig(options.config);
+      console.log('\n📋 Available Profiles\n');
+      console.log('  default - Main profile from config.yml');
+      console.log(`    Offer: ${config.project_profile.offer.substring(0, 50)}...`);
+      console.log(`    Ask: ${config.project_profile.ask.substring(0, 50)}...`);
+      console.log('');
+    } catch (error) {
+      logger.error('Failed to list profiles:', error);
       process.exit(1);
     }
   });

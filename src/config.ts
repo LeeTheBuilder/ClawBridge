@@ -57,28 +57,14 @@ export interface Constraints {
   no_spam_rules?: string[];
   regions?: string[];
   avoid_list?: string[];
+  top_k?: number;
+  recency_days?: number;
+  min_evidence?: number;
 }
 
+// Delivery is deprecated - Vault is the only output channel
 export interface DeliveryConfig {
-  target: 'discord' | 'slack' | 'email' | 'none';
-  discord?: {
-    webhook_url?: string;
-    bot_token?: string;
-    channel_id?: string;
-  };
-  slack?: {
-    webhook_url?: string;
-    bot_token?: string;
-    channel?: string;
-  };
-  email?: {
-    smtp_host: string;
-    smtp_port: number;
-    smtp_user: string;
-    smtp_pass: string;
-    from: string;
-    to: string[];
-  };
+  target: 'none';
 }
 
 export interface VaultConfig {
@@ -175,25 +161,6 @@ export async function loadConfig(configPath: string): Promise<Config> {
   // Load secrets from environment variables
   config.workspace_token = process.env.CLAWBRIDGE_WORKSPACE_TOKEN || rawConfig.workspace_token;
   
-  if (config.delivery.discord) {
-    config.delivery.discord.webhook_url = 
-      process.env.DISCORD_WEBHOOK_URL || config.delivery.discord.webhook_url;
-    config.delivery.discord.bot_token = 
-      process.env.DISCORD_BOT_TOKEN || config.delivery.discord.bot_token;
-  }
-  
-  if (config.delivery.slack) {
-    config.delivery.slack.webhook_url = 
-      process.env.SLACK_WEBHOOK_URL || config.delivery.slack.webhook_url;
-    config.delivery.slack.bot_token = 
-      process.env.SLACK_BOT_TOKEN || config.delivery.slack.bot_token;
-  }
-  
-  if (config.delivery.email) {
-    config.delivery.email.smtp_pass = 
-      process.env.SMTP_PASSWORD || config.delivery.email.smtp_pass;
-  }
-  
   // Load workspace key from environment
   config.workspace_key = process.env.CLAWBRIDGE_WORKSPACE_KEY || config.workspace_key || config.workspace_token;
   
@@ -241,14 +208,11 @@ export function generateExampleConfig(): string {
       max_minutes: 10,
     },
     delivery: {
-      target: 'discord',
-      discord: {
-        channel_id: 'YOUR_CHANNEL_ID',
-      },
+      target: 'none',
     },
     vault: {
-      enabled: false,
-      api_url: 'https://clawbridge.cloud/api',
+      enabled: true,
+      api_url: 'https://clawbridge.cloud',
     },
     output: {
       dir: './output',
