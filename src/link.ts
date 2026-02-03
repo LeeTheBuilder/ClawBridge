@@ -3,7 +3,6 @@ import * as path from 'path';
 import * as readline from 'readline';
 import * as yaml from 'js-yaml';
 import axios from 'axios';
-import { logger } from './logger';
 import { getConfigDir } from './config';
 
 interface LinkResponse {
@@ -59,7 +58,10 @@ function simplePrompt(question: string): Promise<string> {
 }
 
 /**
- * Fetch workspace config (profile & settings) from the API
+ * Fetch workspace config (profile & settings) from the API.
+ * GET {apiUrl}/api/workspace/config
+ * Headers: X-Workspace-Id, X-Workspace-Key
+ * Response: { ok, workspace?: { id, name, profile, settings } }
  */
 async function fetchWorkspaceConfig(
   apiUrl: string,
@@ -182,6 +184,8 @@ export async function linkWorkspace(code: string, options: LinkOptions): Promise
         ideal_persona: profile.ideal_persona || '',
         verticals: profile.verticals?.length ? profile.verticals : [],
         tone: profile.tone || 'friendly, professional',
+        ...(profile.geo_timezone != null && { geo_timezone: profile.geo_timezone }),
+        ...(profile.disallowed?.length && { disallowed: profile.disallowed }),
       }
     : {
         // Template values when no profile is configured on the website
@@ -194,6 +198,7 @@ export async function linkWorkspace(code: string, options: LinkOptions): Promise
 
   // Use workspace settings for constraints
   const maxCandidates = workspaceProfile?.settings?.maxCandidates || 5;
+  const avoidList = workspaceProfile?.profile?.disallowed ?? [];
 
   const config: any = {
     workspace_id: linkData.workspaceId,
@@ -214,7 +219,7 @@ export async function linkWorkspace(code: string, options: LinkOptions): Promise
       recency_days: 30,      // Only candidates active within N days
       min_evidence: 2,       // Minimum evidence URLs per candidate
       regions: [],           // Optional: ['US', 'EU'] to filter by region
-      avoid_list: [],        // Optional: accounts/domains to skip
+      avoid_list: avoidList, // From workspace profile.disallowed
     },
     
     delivery: {
