@@ -18,7 +18,7 @@ const program = new Command();
 program
   .name('clawbridge')
   .description('CLI runner for Clawbridge - find high-quality business connections')
-  .version('2.4.0');
+  .version('2.4.1');
 
 program
   .command('run')
