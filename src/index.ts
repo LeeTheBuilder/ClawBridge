@@ -7,6 +7,12 @@ import { startScheduler, stopScheduler } from './schedule';
 import { loadConfig, getDefaultConfigPath, getConfigDir, getDefaultEnvPath } from './config';
 import { logger } from './logger';
 
+// Read version from package.json to keep in sync
+import * as fs from 'fs';
+import * as path from 'path';
+const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf-8'));
+const VERSION = packageJson.version;
+
 // Load .env from ~/.clawbridge/.env if it exists
 dotenv.config({ path: getDefaultEnvPath() });
 
@@ -18,7 +24,7 @@ const program = new Command();
 program
   .name('clawbridge')
   .description('CLI runner for Clawbridge - find high-quality business connections')
-  .version('3.1.1');
+  .version(VERSION);
 
 program
   .command('run')

@@ -174,27 +174,39 @@ export async function linkWorkspace(code: string, options: LinkOptions): Promise
   const outputDir = isDefaultConfigDir ? path.join(absolutePath, 'output') : './output';
 
   // Use fetched profile or fall back to template values
+  // All required fields (offer, ask, ideal_persona, verticals) must be non-empty
   const profile = workspaceProfile?.profile;
-  const hasProfile = profile && (profile.offer || profile.ask || profile.ideal_persona || (profile.verticals && profile.verticals.length > 0));
+  const hasCompleteProfile = profile && 
+    profile.offer && 
+    profile.ask && 
+    profile.ideal_persona && 
+    profile.verticals && 
+    profile.verticals.length > 0;
   
-  const projectProfile = hasProfile
+  const projectProfile = hasCompleteProfile
     ? {
-        offer: profile.offer || '',
-        ask: profile.ask || '',
-        ideal_persona: profile.ideal_persona || '',
-        verticals: profile.verticals?.length ? profile.verticals : [],
+        offer: profile.offer,
+        ask: profile.ask,
+        ideal_persona: profile.ideal_persona,
+        verticals: profile.verticals,
         tone: profile.tone || 'friendly, professional',
         ...(profile.geo_timezone != null && { geo_timezone: profile.geo_timezone }),
         ...(profile.disallowed?.length && { disallowed: profile.disallowed }),
       }
     : {
-        // Template values when no profile is configured on the website
+        // Template values when profile is incomplete on the website
         offer: 'Describe what you offer (e.g., We help B2B SaaS companies automate their content operations)',
         ask: 'What are you looking for (e.g., Marketing partners, agency relationships)',
         ideal_persona: 'Your ideal contact (e.g., VP Marketing at Series A-C startups)',
         verticals: ['Your', 'industry', 'keywords'],
         tone: 'friendly, professional',
       };
+  
+  if (profile && !hasCompleteProfile) {
+    console.log('⚠️  Workspace profile is incomplete. Please fill in all required fields on the website.');
+    console.log('   Required: offer, ask, ideal_persona, verticals');
+    console.log('   Using template values. Edit config.yml to customize.\n');
+  }
 
   // Use workspace settings for constraints
   const maxCandidates = workspaceProfile?.settings?.maxCandidates || 5;
