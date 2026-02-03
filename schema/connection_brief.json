@@ -62,7 +62,7 @@
             "description": "Full name of the candidate"
           },
           "handle": {
-            "type": ["string", "number"],
+            "type": ["string", "number", "null"],
             "description": "Social media handle or username (e.g., @username)"
           },
           "role": {
@@ -172,7 +172,7 @@
         "required": ["candidate_handle", "action", "reason"],
         "properties": {
           "candidate_handle": {
-            "type": ["string", "number"],
+            "type": ["string", "number", "null"],
             "description": "Handle of the candidate this action is for"
           },
           "action": {
