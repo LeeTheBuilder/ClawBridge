@@ -1,6 +1,6 @@
 {
   "name": "clawbridge-runner",
-  "version": "3.2.0",
+  "version": "3.1.8",
   "description": "CLI runner for clawbridge-skill-latest skill - executes nightly and delivers Connection Briefs",
   "main": "dist/index.js",
   "bin": {
@@ -30,8 +30,9 @@
     "lint": "eslint src/**/*.ts",
     "clean": "rm -rf dist",
     "package": "pkg . --out-path binaries",
-    "release:tag": "(git tag v$npm_package_version 2>/dev/null || true) && git push origin v$npm_package_version",
-    "release": "npm run build && git add . && (git diff --staged --quiet || git commit -m \"Release v$npm_package_version\") && git push && npm run release:tag"
+    "release": "git add -A && (git diff --staged --quiet || git commit -m \"chore: pre-release updates\") && git push && npm version patch && git push && git push --tags",
+    "release:minor": "git add -A && (git diff --staged --quiet || git commit -m \"chore: pre-release updates\") && git push && npm version minor && git push && git push --tags",
+    "release:major": "git add -A && (git diff --staged --quiet || git commit -m \"chore: pre-release updates\") && git push && npm version major && git push && git push --tags"
   },
   "keywords": [
     "clawbridge",
