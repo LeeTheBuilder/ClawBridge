@@ -3,25 +3,66 @@
  * 
  * These prompts instruct OpenClaw (as a worker) to perform web search/fetch/extraction.
  * The discovery strategy is kept in the runner to protect IP.
+ * 
+ * V3.1: Added smoke mode for pipeline verification
  */
 
 import { Config } from '../config';
 
+export type DiscoveryMode = 'smoke' | 'real';
+
 export interface DiscoveryJob {
   systemPrompt: string;
   userPrompt: string;
+  mode: DiscoveryMode;
 }
 
 /**
- * Build the system prompt for discovery
+ * Build the system prompt for SMOKE mode - minimal test
+ * V3.1: Smoke mode just verifies the pipeline works
+ */
+function buildSmokeSystemPrompt(): string {
+  return `You are a test agent. Your task is to verify the pipeline is working.
+
+Do NOT perform any web_search or web_fetch.
+Simply return a minimal valid JSON response to confirm the pipeline works.
+
+Return ONLY this JSON (no markdown, no code fences):
+{
+  "candidates": [
+    {
+      "name": "Test Candidate",
+      "handle": "@test",
+      "role": "Test Role",
+      "company": "Test Company",
+      "why_match": ["Pipeline test"],
+      "evidence_urls": ["https://example.com"],
+      "last_activity": "2026-02-02",
+      "suggested_intro": "This is a smoke test.",
+      "scores": { "relevance": 100, "intent": 100, "credibility": 100, "recency": 100, "engagement": 100, "final_score": 100 }
+    }
+  ],
+  "summary": { "headline": "Smoke test passed", "key_insights": ["Pipeline verified"], "venues_searched": [] },
+  "metadata": { "searches_performed": 0, "pages_fetched": 0, "candidates_evaluated": 1, "completed": true }
+}`;
+}
+
+/**
+ * Build the system prompt for REAL discovery
+ * V3.1: Added explicit web_only constraints
  */
 function buildSystemPrompt(): string {
   return `You are a connection discovery agent. Your task is to find potential business connection opportunities.
 
-## Your Capabilities
-You have access to these tools:
+## Your Capabilities (STRICT)
+You have access to ONLY these tools:
 - web_search: Search the web for candidates
 - web_fetch: Fetch and extract content from URLs
+
+## CRITICAL CONSTRAINTS
+- Use ONLY web_search and web_fetch tools.
+- Do NOT use browser automation.
+- Avoid login-walled sources (LinkedIn, Facebook, etc.) - prefer public profiles.
 
 ## Quality Requirements
 - Find real people/companies with verifiable evidence
@@ -34,6 +75,7 @@ You have access to these tools:
 - News articles without direct profiles
 - Social media with no recent activity
 - Spam or promotional content
+- Login-required pages
 
 ## Time Management (CRITICAL)
 - You have a strict time budget. Track your progress.
@@ -43,7 +85,7 @@ You have access to these tools:
 - If time is almost up, skip drafting intros and just return the core data.
 
 ## Output Format
-Return results as JSON with this structure:
+Return ONLY valid JSON (no markdown, no code fences, no commentary):
 {
   "candidates": [
     {
@@ -68,7 +110,7 @@ Return results as JSON with this structure:
   "summary": {
     "headline": "Found X candidates for Y",
     "key_insights": ["insight 1", "insight 2"],
-    "venues_searched": ["linkedin", "web"]
+    "venues_searched": ["web"]
   },
   "metadata": {
     "searches_performed": 5,
@@ -82,13 +124,27 @@ If you run out of time, set "completed": false in metadata and return whatever y
 }
 
 /**
- * Build the user prompt for a specific discovery job
+ * Build the user prompt for SMOKE mode
  */
-function buildUserPrompt(config: Config): string {
+function buildSmokeUserPrompt(): string {
+  return `This is a SMOKE TEST. Do NOT search the web.
+Just return the minimal valid JSON as specified in the system prompt.
+This verifies the pipeline is working correctly.`;
+}
+
+/**
+ * Build the user prompt for REAL discovery
+ * V3.1: Added debug budget constraints and web_only reminders
+ */
+function buildUserPrompt(config: Config, debugMode: boolean = false): string {
   const profile = config.project_profile;
-  const budget = config.run_budget || { max_searches: 20, max_fetches: 50, max_minutes: 10 };
   const constraints = config.constraints || {};
   const topK = constraints.top_k || 5;
+  
+  // V3.1: Debug mode uses minimal budget for quick verification
+  const budget = debugMode 
+    ? { max_searches: 1, max_fetches: 2 }
+    : (config.run_budget || { max_searches: 20, max_fetches: 50, max_minutes: 10 });
 
   return `## Project Profile
 
@@ -107,7 +163,8 @@ ${profile.disallowed?.length ? `**Do not contact:** ${profile.disallowed.join(',
 ## Budget Limits
 - Maximum searches: ${budget.max_searches}
 - Maximum page fetches: ${budget.max_fetches}
-- Target candidates: ${topK}
+- Target candidates: ${debugMode ? 1 : topK}
+${debugMode ? '- **DEBUG MODE**: Stop early if you can output valid JSON.' : ''}
 
 ## Quality Constraints
 - Minimum evidence URLs per candidate: ${constraints.min_evidence || 2}
@@ -116,12 +173,17 @@ ${constraints.regions?.length ? `- Target regions: ${constraints.regions.join(',
 ${constraints.avoid_list?.length ? `- Avoid: ${constraints.avoid_list.join(', ')}` : ''}
 ${constraints.no_spam_rules?.length ? `- Rules: ${constraints.no_spam_rules.join('; ')}` : ''}
 
+## Tools Policy (MUST FOLLOW)
+- Use ONLY web_search and web_fetch.
+- Do NOT use browser automation.
+- Avoid login-walled sources (LinkedIn, Facebook, etc.).
+
 ## Your Task
 
 1. Search for people/companies that match our "ask" and "ideal persona"
 2. For each potential match, fetch their profile to verify
 3. Score candidates on relevance, intent, credibility, recency, engagement
-4. Return the top ${topK} candidates with:
+4. Return the top ${debugMode ? 1 : topK} candidates with:
    - Full evidence (at least 2 URLs each)
    - Clear reasons why they match
    - Personalized intro message drafts
@@ -131,16 +193,26 @@ ${constraints.no_spam_rules?.length ? `- Rules: ${constraints.no_spam_rules.join
 
 Focus on warm introduction opportunities, not cold leads. Look for intent signals like "looking for partners", "hiring", "building", "expanding".
 
-Return ONLY the JSON output, no additional text.`;
+Return ONLY valid JSON. No markdown. No code fences. No commentary.`;
 }
 
 /**
  * Build a complete discovery job for OpenClaw
+ * V3.1: Added mode parameter for smoke vs real
  */
-export function buildDiscoveryJob(config: Config): DiscoveryJob {
+export function buildDiscoveryJob(config: Config, mode: DiscoveryMode = 'smoke'): DiscoveryJob {
+  if (mode === 'smoke') {
+    return {
+      systemPrompt: buildSmokeSystemPrompt(),
+      userPrompt: buildSmokeUserPrompt(),
+      mode: 'smoke',
+    };
+  }
+  
   return {
     systemPrompt: buildSystemPrompt(),
-    userPrompt: buildUserPrompt(config),
+    userPrompt: buildUserPrompt(config, false), // false = not debug mode for now
+    mode: 'real',
   };
 }
 

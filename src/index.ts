@@ -18,7 +18,7 @@ const program = new Command();
 program
   .name('clawbridge')
   .description('CLI runner for Clawbridge - find high-quality business connections')
-  .version('2.4.2');
+  .version('3.1.0');
 
 program
   .command('run')
@@ -26,6 +26,8 @@ program
   .option('-c, --config <path>', 'Path to config file', DEFAULT_CONFIG)
   .option('-o, --output <dir>', 'Output directory for results')
   .option('-p, --profile <name>', 'Profile name to use (default: default)')
+  .option('-t, --timeout <seconds>', 'Timeout in seconds (default: 60)', '60')
+  .option('-m, --mode <mode>', 'Discovery mode: smoke (verify pipeline) or real (actual discovery)', 'smoke')
   .option('--no-upload', 'Skip vault upload')
   .option('--dry-run', 'Preview what would be done without executing')
   .option('--debug', 'Enable debug logging (same as LOG_LEVEL=debug)')
@@ -35,7 +37,11 @@ program
         process.env.LOG_LEVEL = 'debug';
         logger.level = 'debug';
       }
-      logger.info('Starting clawbridge run...');
+      
+      const timeout = parseInt(options.timeout, 10);
+      const mode = options.mode === 'real' ? 'real' : 'smoke';
+      
+      logger.info('Starting clawbridge run...', { mode, timeout });
       const config = await loadConfig(options.config);
       
       // Use config's output dir if not specified, or default to ~/.clawbridge/output
@@ -47,6 +53,8 @@ program
         upload: options.upload !== false,
         dryRun: options.dryRun || false,
         profile: options.profile,
+        timeout,
+        mode,
       });
       
       logger.info('Run completed successfully');

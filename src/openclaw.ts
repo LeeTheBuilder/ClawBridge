@@ -1,8 +1,8 @@
 /**
  * OpenClaw Worker Module
  * 
- * Calls OpenClaw/Clawdbot CLI to perform web search/fetch/extraction.
- * Uses spawn for real-time output streaming.
+ * Calls OpenClaw CLI to perform web search/fetch/extraction.
+ * V3.1: Simplified - uses CLI --timeout directly, no complex kill logic.
  */
 
 import { spawn, exec } from 'child_process';
@@ -13,9 +13,9 @@ import { DiscoveryJob } from './prompts';
 const execAsync = promisify(exec);
 
 // ============================================================================
-// TIMEOUT CONFIG - Change this to adjust discovery timeout
+// TIMEOUT CONFIG - Single timeout variable, passed to CLI --timeout
 // ============================================================================
-const TIMEOUT_SECONDS = 60;
+export const DEFAULT_TIMEOUT_SECONDS = 60;
 
 export interface DiscoveryResult {
   candidates: any[];
@@ -78,22 +78,74 @@ function extractJson(text: string): any | null {
 }
 
 /**
+ * Extract agent text from payloads - search from back to front
+ * V3.1: More robust extraction, finds last non-empty payload text
+ */
+function extractPayloadText(json: any): string {
+  const payloads = json?.result?.payloads || json?.payloads || [];
+  
+  // Search from back to front for the last payload with text
+  for (let i = payloads.length - 1; i >= 0; i--) {
+    const text = payloads[i]?.text;
+    if (text && typeof text === 'string' && text.trim()) {
+      return text.trim();
+    }
+  }
+  
+  return '';
+}
+
+/**
  * Parse CLI JSON output into DiscoveryResult
+ * V3.1: Uses extractPayloadText to find agent output from payloads
  */
 function parseResult(stdout: string, source: 'openclaw' | 'clawdbot'): DiscoveryResult | null {
   let json: any;
   try {
     json = JSON.parse(stdout);
-  } catch {
-    logger.warn(`[${source}] Failed to parse stdout as JSON`);
+  } catch (e) {
+    logger.warn(`[${source}] Failed to parse stdout as JSON`, { error: String(e) });
+    logger.debug(`[${source}] Raw stdout (first 500 chars):`, stdout.slice(0, 500));
     return null;
   }
   
-  const agentText = json.payloads?.[0]?.text ?? '';
+  // Check for error status
+  if (json.status === 'error') {
+    logger.warn(`[${source}] Agent returned error status`, { summary: json.summary });
+    return null;
+  }
+  
+  // Extract agent text from payloads (search from back to front)
+  const agentText = extractPayloadText(json);
+  
+  if (!agentText) {
+    logger.warn(`[${source}] No text found in payloads`);
+    logger.debug(`[${source}] Full JSON response:`, JSON.stringify(json, null, 2).slice(0, 1000));
+    return null;
+  }
+  
+  logger.debug(`[${source}] Extracted agent text (first 200 chars):`, agentText.slice(0, 200));
+  
   const data = extractJson(agentText);
   
-  if (!data?.candidates?.length) {
-    logger.warn(`[${source}] No candidates found in response`);
+  if (!data) {
+    logger.warn(`[${source}] Could not parse JSON from agent text`);
+    return null;
+  }
+  
+  // For smoke mode, we might just get "OK" or minimal response
+  if (!data.candidates) {
+    // Check if this is a smoke test response
+    if (agentText.toUpperCase() === 'OK' || data.status === 'ok') {
+      logger.info(`[${source}] Smoke test response received`);
+      return {
+        candidates: [],
+        summary: { headline: 'Smoke test passed', key_insights: ['Pipeline verified'], venues_searched: [] },
+        metadata: { searches_performed: 0, pages_fetched: 0, candidates_evaluated: 0, completed: true },
+        source,
+      };
+    }
+    logger.warn(`[${source}] No candidates array in response`);
     return null;
   }
   
@@ -104,20 +156,26 @@ function parseResult(stdout: string, source: 'openclaw' | 'clawdbot'): Discovery
       searches_performed: data.metadata?.searches_performed || 0,
       pages_fetched: data.metadata?.pages_fetched || 0,
       candidates_evaluated: data.candidates.length,
-      completed: true,
+      completed: data.metadata?.completed ?? true,
     },
     source,
   };
 }
 
 /**
- * Run CLI with streaming output and timeout
+ * Run CLI with streaming output
+ * V3.1 Simplified: 
+ *   - No --local flag (uses cloud/default mode)
+ *   - Timeout is handled by CLI itself via --timeout flag
+ *   - No complex SIGTERM/SIGKILL logic needed
  */
-function runCLI(cli: string, agent: string, message: string): Promise<string> {
+function runCLI(cli: string, agent: string, message: string, timeoutSeconds: number): Promise<string> {
   return new Promise((resolve, reject) => {
-    const args = ['agent', '--local', '--json', '--timeout', String(TIMEOUT_SECONDS), '--agent', agent, '-m', message];
+    // V3.1: Removed --local, CLI handles timeout internally
+    const args = ['agent', '--json', '--timeout', String(timeoutSeconds), '--agent', agent, '-m', message];
     
-    logger.info(`[${cli}] Spawning process`, { timeout: TIMEOUT_SECONDS, agent });
+    logger.info(`[${cli}] Spawning process`, { timeout: timeoutSeconds, agent });
+    logger.debug(`[${cli}] Command: ${cli} ${args.join(' ').slice(0, 200)}...`);
     
     const proc = spawn(cli, args, { 
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -132,41 +190,37 @@ function runCLI(cli: string, agent: string, message: string): Promise<string> {
     proc.stdout.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
       stdout += text;
-      // Log each line of output
+      // Only log first part of each line to avoid noise
       text.split('\n').filter(Boolean).forEach(line => {
-        logger.info(`[${cli}] stdout: ${line.slice(0, 200)}`);
+        logger.debug(`[${cli}] stdout: ${line.slice(0, 150)}`);
       });
     });
     
-    // Stream stderr (includes openclaw's progress messages)
+    // Stream stderr (log as debug, not info)
     proc.stderr.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
       stderr += text;
       text.split('\n').filter(Boolean).forEach(line => {
-        logger.info(`[${cli}] stderr: ${line.slice(0, 200)}`);
+        logger.debug(`[${cli}] stderr: ${line.slice(0, 150)}`);
       });
     });
     
-    // Timeout - kill process after TIMEOUT_SECONDS
-    const timer = setTimeout(() => {
-      logger.warn(`[${cli}] Timeout after ${TIMEOUT_SECONDS}s, killing process`);
-      proc.kill('SIGTERM');
-    }, TIMEOUT_SECONDS * 1000);
-    
     proc.on('close', (code, signal) => {
-      clearTimeout(timer);
       const elapsedMs = Date.now() - startMs;
       logger.info(`[${cli}] Process exited`, { code, signal, elapsedMs, stdoutLen: stdout.length });
       
       if (stdout) {
         resolve(stdout);
+      } else if (stderr) {
+        logger.error(`[${cli}] No stdout, stderr:`, stderr.slice(0, 500));
+        reject(new Error(`Process exited with no output. Code: ${code}, Signal: ${signal}`));
       } else {
-        reject(new Error(`Process exited with code ${code}, signal ${signal}`));
+        reject(new Error(`Process exited with code ${code}, signal ${signal}, no output`));
       }
     });
     
     proc.on('error', (err) => {
-      clearTimeout(timer);
+      logger.error(`[${cli}] Spawn error:`, err.message);
       reject(err);
     });
   });
@@ -174,45 +228,88 @@ function runCLI(cli: string, agent: string, message: string): Promise<string> {
 
 /**
  * Execute discovery via CLI
+ * V3.1: Added timeout parameter
  */
-async function executeViaCLI(cli: 'openclaw' | 'clawdbot', job: DiscoveryJob): Promise<DiscoveryResult | null> {
+async function executeViaCLI(
+  cli: 'openclaw' | 'clawdbot', 
+  job: DiscoveryJob,
+  timeoutSeconds: number
+): Promise<DiscoveryResult | null> {
   const agent = await getDefaultAgent(cli);
   if (!agent) {
     logger.warn(`[${cli}] No agent configured`);
     return null;
   }
   
-  const message = `${job.systemPrompt}\n\n---\n\n${job.userPrompt}\n\nReturn ONLY valid JSON.`;
+  // V3.1: Add hard constraints at the end of message (strongest position)
+  const hardConstraints = `
+
+---
+## HARD CONSTRAINTS (MUST FOLLOW)
+- Use ONLY web_search and web_fetch.
+- Do NOT use browser automation.
+- Avoid login-walled sources (LinkedIn, Facebook, etc.).
+- Return ONLY valid JSON. No markdown. No code fences. No commentary.`;
+
+  const message = `${job.systemPrompt}\n\n---\n\n${job.userPrompt}${hardConstraints}`;
   
   try {
-    const stdout = await runCLI(cli, agent, message);
+    const stdout = await runCLI(cli, agent, message, timeoutSeconds);
     const result = parseResult(stdout, cli);
     if (result) {
       logger.info(`[${cli}] Got ${result.candidates.length} candidates`);
     }
     return result;
   } catch (err: any) {
-    logger.warn(`[${cli}] Failed`, { error: err.message });
+    logger.error(`[${cli}] Failed`, { error: err.message });
     return null;
   }
 }
 
+export interface DiscoveryOptions {
+  timeout?: number;
+  mode?: 'smoke' | 'real';
+}
+
 /**
  * Main entry: try OpenClaw, then Clawdbot, then simulated
+ * V3.1: Added options for timeout and mode
  */
-export async function executeDiscovery(job: DiscoveryJob): Promise<DiscoveryResult> {
-  logger.info('Starting discovery', { timeout: TIMEOUT_SECONDS });
+export async function executeDiscovery(
+  job: DiscoveryJob, 
+  options: DiscoveryOptions = {}
+): Promise<DiscoveryResult> {
+  const timeout = options.timeout || DEFAULT_TIMEOUT_SECONDS;
+  const mode = options.mode || 'smoke';
+  
+  logger.info('Starting discovery', { timeout, mode });
   
   if (await checkCommand('openclaw')) {
     logger.info('Trying openclaw...');
-    const result = await executeViaCLI('openclaw', job);
-    if (result?.candidates.length) return result;
+    const result = await executeViaCLI('openclaw', job, timeout);
+    
+    // V3.1: For smoke mode, accept empty candidates (just pipeline verification)
+    if (mode === 'smoke' && result) {
+      return result;
+    }
+    
+    // For real mode, require at least some candidates
+    if (result?.candidates.length) {
+      return result;
+    }
+    
+    // If openclaw returned a result but no candidates, still return it for smoke
+    if (result) {
+      logger.info('openclaw returned result with no candidates');
+      return result;
+    }
   }
   
   if (await checkCommand('clawdbot')) {
     logger.info('Trying clawdbot...');
-    const result = await executeViaCLI('clawdbot', job);
+    const result = await executeViaCLI('clawdbot', job, timeout);
     if (result?.candidates.length) return result;
+    if (mode === 'smoke' && result) return result;
   }
   
   logger.warn('No CLI available or no results, using simulated data');
