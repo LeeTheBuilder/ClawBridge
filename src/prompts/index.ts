@@ -10,12 +10,6 @@ import { Config } from '../config';
 export interface DiscoveryJob {
   systemPrompt: string;
   userPrompt: string;
-  tools: string[];
-  maxTokens: number;
-  timeoutSeconds: number;
-  maxSearches: number;
-  maxFetches: number;
-  topK: number;
 }
 
 /**
@@ -90,7 +84,7 @@ If you run out of time, set "completed": false in metadata and return whatever y
 /**
  * Build the user prompt for a specific discovery job
  */
-function buildUserPrompt(config: Config, timeoutSeconds: number): string {
+function buildUserPrompt(config: Config): string {
   const profile = config.project_profile;
   const budget = config.run_budget || { max_searches: 20, max_fetches: 50, max_minutes: 10 };
   const constraints = config.constraints || {};
@@ -110,8 +104,7 @@ ${profile.tone ? `**Tone for messages:** ${profile.tone}` : ''}
 
 ${profile.disallowed?.length ? `**Do not contact:** ${profile.disallowed.join(', ')}` : ''}
 
-## STRICT BUDGET LIMITS
-- **Time limit: ${timeoutSeconds} seconds** (HARD LIMIT - return results before this!)
+## Budget Limits
 - Maximum searches: ${budget.max_searches}
 - Maximum page fetches: ${budget.max_fetches}
 - Target candidates: ${topK}
@@ -134,7 +127,7 @@ ${constraints.no_spam_rules?.length ? `- Rules: ${constraints.no_spam_rules.join
    - Personalized intro message drafts
    - Risk flags if applicable
 
-**IMPORTANT**: You have ${timeoutSeconds} seconds. If you're at 80% of time, STOP and return what you have. Partial results are better than no results.
+**IMPORTANT**: Work efficiently. Return partial results if needed. Partial results are better than no results.
 
 Focus on warm introduction opportunities, not cold leads. Look for intent signals like "looking for partners", "hiring", "building", "expanding".
 
@@ -145,19 +138,9 @@ Return ONLY the JSON output, no additional text.`;
  * Build a complete discovery job for OpenClaw
  */
 export function buildDiscoveryJob(config: Config): DiscoveryJob {
-  const budget = config.run_budget || { max_searches: 20, max_fetches: 50, max_minutes: 10 };
-  const constraints = config.constraints || {};
-  const timeoutSeconds = budget.max_minutes * 60;
-  
   return {
     systemPrompt: buildSystemPrompt(),
-    userPrompt: buildUserPrompt(config, timeoutSeconds),
-    tools: ['web_search', 'web_fetch'],
-    maxTokens: 4000,
-    timeoutSeconds,
-    maxSearches: budget.max_searches,
-    maxFetches: budget.max_fetches,
-    topK: constraints.top_k || 5,
+    userPrompt: buildUserPrompt(config),
   };
 }
 

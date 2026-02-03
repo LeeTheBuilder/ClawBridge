@@ -189,11 +189,8 @@ async function executeRealDiscovery(
   // Build the discovery job with runner-controlled prompts
   const job = buildDiscoveryJob(config);
   
-  // Calculate timeout
-  const timeoutMs = (config.run_budget?.max_minutes || 10) * 60 * 1000;
-  
-  // Execute discovery with fallback chain
-  const result = await executeDiscovery(job, timeoutMs);
+  // Execute discovery (timeout is configured in openclaw.ts)
+  const result = await executeDiscovery(job);
   
   // Map result to ConnectionBrief format
   const brief: ConnectionBrief = {
