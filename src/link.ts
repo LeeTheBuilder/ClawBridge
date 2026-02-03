@@ -14,6 +14,28 @@ interface LinkResponse {
   error?: string;
 }
 
+interface WorkspaceConfigResponse {
+  ok: boolean;
+  error?: string;
+  workspace?: {
+    id: string;
+    name: string;
+    profile: {
+      offer: string;
+      ask: string;
+      ideal_persona: string;
+      verticals: string[];
+      tone?: string;
+      geo_timezone?: string;
+      disallowed?: string[];
+    };
+    settings: {
+      maxRunsPerDay: number;
+      maxCandidates: number;
+    };
+  };
+}
+
 interface LinkOptions {
   dir: string;
   apiUrl: string;
@@ -34,6 +56,31 @@ function simplePrompt(question: string): Promise<string> {
       resolve(answer.trim());
     });
   });
+}
+
+/**
+ * Fetch workspace config (profile & settings) from the API
+ */
+async function fetchWorkspaceConfig(
+  apiUrl: string,
+  workspaceId: string,
+  apiKey: string
+): Promise<WorkspaceConfigResponse> {
+  try {
+    const response = await axios.get(`${apiUrl}/api/workspace/config`, {
+      headers: {
+        'X-Workspace-Id': workspaceId,
+        'X-Workspace-Key': apiKey,
+      },
+      timeout: 10000,
+    });
+    return response.data;
+  } catch (error: any) {
+    if (error.response?.data?.error) {
+      return { ok: false, error: error.response.data.error };
+    }
+    return { ok: false, error: error.message || 'Failed to fetch workspace config' };
+  }
 }
 
 /**
@@ -93,6 +140,23 @@ export async function linkWorkspace(code: string, options: LinkOptions): Promise
     console.log('\n⚠️  Warning: API key should start with "cbk_". Proceeding anyway...\n');
   }
 
+  // Fetch workspace config (profile & settings) from the API
+  console.log('Fetching workspace settings...');
+  const configResponse = await fetchWorkspaceConfig(
+    options.apiUrl,
+    linkData.workspaceId!,
+    apiKey
+  );
+
+  let workspaceProfile: WorkspaceConfigResponse['workspace'] | undefined;
+  if (configResponse.ok && configResponse.workspace) {
+    workspaceProfile = configResponse.workspace;
+    console.log('✅ Workspace settings retrieved successfully\n');
+  } else {
+    console.log(`⚠️  Could not fetch workspace settings: ${configResponse.error}`);
+    console.log('   Using default template values. You can edit config.yml later.\n');
+  }
+
   // Create the config directory
   const absolutePath = path.resolve(options.dir);
   if (!fs.existsSync(absolutePath)) {
@@ -107,17 +171,35 @@ export async function linkWorkspace(code: string, options: LinkOptions): Promise
   const isDefaultConfigDir = absolutePath === getConfigDir();
   const outputDir = isDefaultConfigDir ? path.join(absolutePath, 'output') : './output';
 
+  // Use fetched profile or fall back to template values
+  const profile = workspaceProfile?.profile;
+  const hasProfile = profile && (profile.offer || profile.ask || profile.ideal_persona || (profile.verticals && profile.verticals.length > 0));
+  
+  const projectProfile = hasProfile
+    ? {
+        offer: profile.offer || '',
+        ask: profile.ask || '',
+        ideal_persona: profile.ideal_persona || '',
+        verticals: profile.verticals?.length ? profile.verticals : [],
+        tone: profile.tone || 'friendly, professional',
+      }
+    : {
+        // Template values when no profile is configured on the website
+        offer: 'Describe what you offer (e.g., We help B2B SaaS companies automate their content operations)',
+        ask: 'What are you looking for (e.g., Marketing partners, agency relationships)',
+        ideal_persona: 'Your ideal contact (e.g., VP Marketing at Series A-C startups)',
+        verticals: ['Your', 'industry', 'keywords'],
+        tone: 'friendly, professional',
+      };
+
+  // Use workspace settings for constraints
+  const maxCandidates = workspaceProfile?.settings?.maxCandidates || 5;
+
   const config: any = {
     workspace_id: linkData.workspaceId,
     
-    // Your project profile - EDIT THESE VALUES
-    project_profile: {
-      offer: 'Describe what you offer (e.g., We help B2B SaaS companies automate their content operations)',
-      ask: 'What are you looking for (e.g., Marketing partners, agency relationships)',
-      ideal_persona: 'Your ideal contact (e.g., VP Marketing at Series A-C startups)',
-      verticals: ['Your', 'industry', 'keywords'],
-      tone: 'friendly, professional',
-    },
+    // Your project profile
+    project_profile: projectProfile,
     
     // Search budget limits
     run_budget: {
@@ -128,11 +210,11 @@ export async function linkWorkspace(code: string, options: LinkOptions): Promise
     
     // Quality constraints
     constraints: {
-      top_k: 5,            // Return top N candidates
-      recency_days: 30,    // Only candidates active within N days
-      min_evidence: 2,     // Minimum evidence URLs per candidate
-      regions: [],         // Optional: ['US', 'EU'] to filter by region
-      avoid_list: [],      // Optional: accounts/domains to skip
+      top_k: maxCandidates,  // Return top N candidates (from workspace settings)
+      recency_days: 30,      // Only candidates active within N days
+      min_evidence: 2,       // Minimum evidence URLs per candidate
+      regions: [],           // Optional: ['US', 'EU'] to filter by region
+      avoid_list: [],        // Optional: accounts/domains to skip
     },
     
     delivery: {
@@ -178,25 +260,6 @@ LOG_LEVEL=info
   }
   fs.writeFileSync(envPath, envContent);
 
-  // Create .gitignore
-  const gitignorePath = path.join(absolutePath, '.gitignore');
-  if (!fs.existsSync(gitignorePath)) {
-    const gitignoreContent = `# Environment secrets
-.env
-.env.local
-.env.*.backup.*
-
-# Output
-output/
-
-# Logs
-*.log
-
-# Backups
-*.backup.*
-`;
-    fs.writeFileSync(gitignorePath, gitignoreContent);
-  }
 
   // Create output directory
   const outputPath = path.join(absolutePath, 'output');
@@ -208,20 +271,17 @@ output/
   // Print success and next steps
   console.log('\n' + '─'.repeat(60));
   console.log('\n✅ Workspace linked successfully!\n');
-  console.log('📁 Files created:');
+  console.log('📁 Files created at ~/ root folder:');
   console.log(`   • config.yml - Runner configuration`);
   console.log(`   • .env - API key`);
-  console.log(`   • .gitignore - Protect your secrets`);
   console.log(`   • output/ - Run results directory`);
   
   console.log('\n📝 Next steps:\n');
-  console.log('1. Edit config.yml to customize your project profile');
-  console.log('   - Update offer, ask, ideal_persona, and verticals');
   console.log('');
-  console.log('2. Test your setup:');
+  console.log('1. Test your setup:');
   console.log('   clawbridge doctor');
   console.log('');
-  console.log('3. Run Clawbridge:');
+  console.log('2. Run Clawbridge:');
   console.log('   clawbridge run');
   console.log('');
   console.log('─'.repeat(60));

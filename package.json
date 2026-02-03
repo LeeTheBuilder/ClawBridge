@@ -29,7 +29,9 @@
     "test": "jest",
     "lint": "eslint src/**/*.ts",
     "clean": "rm -rf dist",
-    "package": "pkg . --out-path binaries"
+    "package": "pkg . --out-path binaries",
+    "release:tag": "git tag v$npm_package_version && git push origin v$npm_package_version",
+    "release": "npm run build && git add . && (git diff --staged --quiet || git commit -m \"Release v$npm_package_version\") && git push && npm run release:tag"
   },
   "keywords": [
     "clawbridge",
