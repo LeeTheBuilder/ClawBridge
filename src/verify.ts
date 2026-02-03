@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { Config, loadConfig } from './config';
+import { getVaultApiUrl } from './vault';
 import { logger } from './logger';
 
 /**
@@ -27,7 +28,7 @@ export async function verifyVault(configPath: string): Promise<void> {
     return;
   }
 
-  const apiUrl = config.vault.api_url || 'https://clawbridge.cloud';
+  const apiUrl = getVaultApiUrl(config);
   const apiKey = config.workspace_key || config.vault.workspace_key;
 
   if (!apiKey) {

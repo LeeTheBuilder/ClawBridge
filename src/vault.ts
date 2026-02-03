@@ -4,6 +4,27 @@ import { ConnectionBrief } from './run';
 import { logger } from './logger';
 import { validateFull, printValidationErrors } from './validate';
 
+/** Production vault URL – used when config has localhost (e.g. from linking against local dev). */
+const PRODUCTION_VAULT_URL = 'https://clawbridge.cloud';
+
+/**
+ * Effective vault API URL. If config has localhost/127.0.0.1, use production URL
+ * so runners always upload to clawbridge.cloud in prod.
+ */
+export function getVaultApiUrl(config: Config): string {
+  const raw = config.vault?.api_url;
+  if (!raw) return PRODUCTION_VAULT_URL;
+  try {
+    const u = new URL(raw);
+    if (u.hostname === 'localhost' || u.hostname === '127.0.0.1') {
+      return PRODUCTION_VAULT_URL;
+    }
+  } catch {
+    return raw;
+  }
+  return raw;
+}
+
 export interface UploadResult {
   ok: boolean;
   runId: string;
@@ -20,10 +41,7 @@ export async function uploadToVault(brief: ConnectionBrief, config: Config): Pro
     return null;
   }
   
-  if (!config.vault.api_url) {
-    throw new Error('Vault API URL not configured');
-  }
-  
+  const apiUrl = getVaultApiUrl(config);
   const apiKey = config.vault.workspace_key || config.workspace_key;
   
   if (!apiKey) {
@@ -39,10 +57,10 @@ export async function uploadToVault(brief: ConnectionBrief, config: Config): Pro
   }
   logger.info('Validation passed');
   
-  const uploadUrl = `${config.vault.api_url}/api/upload-run`;
+  const uploadUrl = `${apiUrl}/api/upload-run`;
   
   logger.info('Uploading to vault', { 
-    api_url: config.vault.api_url,
+    api_url: apiUrl,
     workspace_id: config.workspace_id,
   });
 
@@ -129,10 +147,10 @@ export async function fetchRuns(
   config: Config, 
   options?: { limit?: number; offset?: number }
 ): Promise<ConnectionBrief[]> {
-  if (!config.vault?.api_url) {
+  if (!config.vault?.enabled) {
     throw new Error('Vault API URL not configured');
   }
-  
+  const apiUrl = getVaultApiUrl(config);
   const token = config.vault.workspace_token || config.workspace_token;
   
   if (!token) {
@@ -144,7 +162,7 @@ export async function fetchRuns(
   if (options?.offset) params.set('offset', options.offset.toString());
   
   const response = await axios.get(
-    `${config.vault.api_url}/workspaces/${config.workspace_id}/runs?${params}`,
+    `${apiUrl}/workspaces/${config.workspace_id}/runs?${params}`,
     {
       headers: {
         'Authorization': `Bearer ${token}`,
@@ -162,10 +180,10 @@ export async function fetchRun(
   config: Config, 
   runId: string
 ): Promise<ConnectionBrief> {
-  if (!config.vault?.api_url) {
+  if (!config.vault?.enabled) {
     throw new Error('Vault API URL not configured');
   }
-  
+  const apiUrl = getVaultApiUrl(config);
   const token = config.vault.workspace_token || config.workspace_token;
   
   if (!token) {
@@ -173,7 +191,7 @@ export async function fetchRun(
   }
   
   const response = await axios.get(
-    `${config.vault.api_url}/workspaces/${config.workspace_id}/runs/${encodeURIComponent(runId)}`,
+    `${apiUrl}/workspaces/${config.workspace_id}/runs/${encodeURIComponent(runId)}`,
     {
       headers: {
         'Authorization': `Bearer ${token}`,
@@ -198,10 +216,10 @@ export async function updateCandidateDecision(
     decided_by?: string;
   }
 ): Promise<void> {
-  if (!config.vault?.api_url) {
+  if (!config.vault?.enabled) {
     throw new Error('Vault API URL not configured');
   }
-  
+  const apiUrl = getVaultApiUrl(config);
   const token = config.vault.workspace_token || config.workspace_token;
   
   if (!token) {
@@ -209,7 +227,7 @@ export async function updateCandidateDecision(
   }
   
   await axios.patch(
-    `${config.vault.api_url}/workspaces/${config.workspace_id}/runs/${encodeURIComponent(runId)}/candidates/${encodeURIComponent(candidateHandle)}/decision`,
+    `${apiUrl}/workspaces/${config.workspace_id}/runs/${encodeURIComponent(runId)}/candidates/${encodeURIComponent(candidateHandle)}/decision`,
     {
       ...decision,
       decided_at: decision.decided_at || new Date().toISOString(),

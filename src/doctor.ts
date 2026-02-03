@@ -4,6 +4,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import axios from 'axios';
 import { loadConfig, Config } from './config';
+import { getVaultApiUrl } from './vault';
 import { logger } from './logger';
 
 const execAsync = promisify(exec);
@@ -48,9 +49,9 @@ export async function runDoctor(configPath: string): Promise<void> {
     results.push(checkApiKey(config));
   }
 
-  // Check 5: Vault URL reachable
-  if (config?.vault?.enabled && config.vault.api_url) {
-    results.push(await checkVaultUrl(config.vault.api_url));
+  // Check 5: Vault URL reachable (uses effective URL, e.g. clawbridge.cloud when config has localhost)
+  if (config?.vault?.enabled) {
+    results.push(await checkVaultUrl(getVaultApiUrl(config)));
   }
 
   // Check 6: Output directory writable
