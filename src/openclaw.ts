@@ -1,11 +1,11 @@
 /**
  * OpenClaw Worker Module
  * 
- * Handles calling OpenClaw/Clawdbot as a worker to perform web search/fetch/extraction.
- * Uses local CLI tools (no external APIs).
+ * Calls OpenClaw/Clawdbot CLI to perform web search/fetch/extraction.
+ * Uses spawn for real-time output streaming.
  */
 
-import { exec } from 'child_process';
+import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
 import { logger } from './logger';
 import { DiscoveryJob } from './prompts';
@@ -13,16 +13,9 @@ import { DiscoveryJob } from './prompts';
 const execAsync = promisify(exec);
 
 // ============================================================================
-// TIMEOUT CONFIG
-// - TIMEOUT_SECONDS: Passed to CLI as --timeout. The agent is told to wrap up
-//   and return (partial) results before this. We do NOT kill the process at
-//   this time so the agent can flush stdout.
-// - NODE_TIMEOUT_MS: Node kills the child only after this (safety net). Must be
-//   longer than TIMEOUT_SECONDS so we get results when the CLI honors --timeout.
+// TIMEOUT CONFIG - Change this to adjust discovery timeout
 // ============================================================================
-const TIMEOUT_SECONDS = 60;  // Agent has 60s to run, then should return
-const GRACE_SECONDS = 30;    // Extra time for agent to flush after --timeout
-const NODE_TIMEOUT_MS = (TIMEOUT_SECONDS + GRACE_SECONDS) * 1000;  // 90s kill
+const TIMEOUT_SECONDS = 60;
 
 export interface DiscoveryResult {
   candidates: any[];
@@ -45,89 +38,72 @@ export interface DiscoveryResult {
  */
 async function checkCommand(cmd: string): Promise<boolean> {
   try {
-    const { stdout } = await execAsync(`${cmd} --version`, { timeout: 5000 });
-    logger.info(`[${cmd}] Found`, { versionOutput: (stdout || '').trim().slice(0, 80) });
+    await execAsync(`which ${cmd}`, { timeout: 5000 });
     return true;
-  } catch (e: any) {
-    logger.info(`[${cmd}] Not found or failed`, { error: e.message });
+  } catch {
     return false;
   }
 }
 
 /**
- * Get the default agent name for a CLI tool
+ * Get the default agent name
  */
 async function getDefaultAgent(cli: string): Promise<string | null> {
   try {
     const { stdout } = await execAsync(`${cli} agents list`, { timeout: 10000 });
     const match = stdout.match(/- (\w+) \(default\)/) || stdout.match(/- (\w+)/);
-    const agent = match ? match[1] : null;
-    logger.info(`[${cli}] Agents list`, { defaultAgent: agent, listPreview: stdout?.slice(0, 150) });
-    return agent;
-  } catch (e: any) {
-    logger.warn(`[${cli}] agents list failed`, { error: e.message });
+    return match ? match[1] : null;
+  } catch {
     return null;
   }
 }
 
 /**
- * Extract JSON from a text response that might contain markdown code blocks
+ * Extract JSON from agent text response
  */
-function extractJsonFromResponse(text: string): any | null {
-  // Try direct JSON parse
+function extractJson(text: string): any | null {
   try { return JSON.parse(text); } catch {}
   
-  // Look for JSON in markdown code blocks
-  const jsonBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-  if (jsonBlockMatch) {
-    try { return JSON.parse(jsonBlockMatch[1]); } catch {}
+  const jsonBlock = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (jsonBlock) {
+    try { return JSON.parse(jsonBlock[1]); } catch {}
   }
   
-  // Look for JSON object anywhere
-  const jsonMatch = text.match(/\{[\s\S]*"candidates"[\s\S]*\}/);
-  if (jsonMatch) {
-    try { return JSON.parse(jsonMatch[0]); } catch {}
+  const jsonObj = text.match(/\{[\s\S]*"candidates"[\s\S]*\}/);
+  if (jsonObj) {
+    try { return JSON.parse(jsonObj[0]); } catch {}
   }
   
   return null;
 }
 
 /**
- * Parse CLI response into DiscoveryResult
+ * Parse CLI JSON output into DiscoveryResult
  */
-function parseResponse(stdout: string, source: 'openclaw' | 'clawdbot'): DiscoveryResult | null {
-  logger.info(`[${source}] Parsing response`, { stdoutLength: stdout?.length ?? 0 });
-  
-  let cliResponse: any;
+function parseResult(stdout: string, source: 'openclaw' | 'clawdbot'): DiscoveryResult | null {
+  let json: any;
   try {
-    cliResponse = JSON.parse(stdout);
-  } catch (e: any) {
-    logger.warn(`[${source}] Failed to parse CLI output as JSON`, { error: e.message, stdoutPreview: stdout?.slice(0, 200) });
+    json = JSON.parse(stdout);
+  } catch {
+    logger.warn(`[${source}] Failed to parse stdout as JSON`);
     return null;
   }
   
-  const agentText = cliResponse.payloads?.[0]?.text ?? '';
-  logger.info(`[${source}] Agent text length`, { length: agentText.length, preview: agentText.slice(0, 150) });
+  const agentText = json.payloads?.[0]?.text ?? '';
+  const data = extractJson(agentText);
   
-  const discoveryData = extractJsonFromResponse(agentText);
-  
-  if (!discoveryData?.candidates?.length) {
-    logger.warn(`[${source}] No candidates in response`, { hasData: !!discoveryData, keys: discoveryData ? Object.keys(discoveryData) : [] });
+  if (!data?.candidates?.length) {
+    logger.warn(`[${source}] No candidates found in response`);
     return null;
   }
   
-  logger.info(`[${source}] Parsed successfully`, { candidates: discoveryData.candidates.length });
   return {
-    candidates: discoveryData.candidates,
-    summary: discoveryData.summary || { 
-      headline: `Found ${discoveryData.candidates.length} candidates`, 
-      key_insights: [], 
-      venues_searched: [] 
-    },
+    candidates: data.candidates,
+    summary: data.summary || { headline: `Found ${data.candidates.length} candidates`, key_insights: [], venues_searched: [] },
     metadata: {
-      searches_performed: discoveryData.metadata?.searches_performed || 0, 
-      pages_fetched: discoveryData.metadata?.pages_fetched || 0, 
-      candidates_evaluated: discoveryData.candidates.length,
+      searches_performed: data.metadata?.searches_performed || 0,
+      pages_fetched: data.metadata?.pages_fetched || 0,
+      candidates_evaluated: data.candidates.length,
       completed: true,
     },
     source,
@@ -135,129 +111,116 @@ function parseResponse(stdout: string, source: 'openclaw' | 'clawdbot'): Discove
 }
 
 /**
- * Execute discovery via a CLI tool (openclaw or clawdbot)
+ * Run CLI with streaming output and timeout
  */
-async function executeViaCLI(
-  cli: 'openclaw' | 'clawdbot', 
-  job: DiscoveryJob
-): Promise<DiscoveryResult | null> {
-  logger.info(`[${cli}] Checking for agent...`);
+function runCLI(cli: string, agent: string, message: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const args = ['agent', '--local', '--json', '--timeout', String(TIMEOUT_SECONDS), '--agent', agent, '-m', message];
+    
+    logger.info(`[${cli}] Spawning process`, { timeout: TIMEOUT_SECONDS, agent });
+    
+    const proc = spawn(cli, args, { 
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env },
+    });
+    
+    let stdout = '';
+    let stderr = '';
+    const startMs = Date.now();
+    
+    // Stream stdout
+    proc.stdout.on('data', (chunk: Buffer) => {
+      const text = chunk.toString();
+      stdout += text;
+      // Log each line of output
+      text.split('\n').filter(Boolean).forEach(line => {
+        logger.info(`[${cli}] stdout: ${line.slice(0, 200)}`);
+      });
+    });
+    
+    // Stream stderr (includes openclaw's progress messages)
+    proc.stderr.on('data', (chunk: Buffer) => {
+      const text = chunk.toString();
+      stderr += text;
+      text.split('\n').filter(Boolean).forEach(line => {
+        logger.info(`[${cli}] stderr: ${line.slice(0, 200)}`);
+      });
+    });
+    
+    // Timeout - kill process after TIMEOUT_SECONDS
+    const timer = setTimeout(() => {
+      logger.warn(`[${cli}] Timeout after ${TIMEOUT_SECONDS}s, killing process`);
+      proc.kill('SIGTERM');
+    }, TIMEOUT_SECONDS * 1000);
+    
+    proc.on('close', (code, signal) => {
+      clearTimeout(timer);
+      const elapsedMs = Date.now() - startMs;
+      logger.info(`[${cli}] Process exited`, { code, signal, elapsedMs, stdoutLen: stdout.length });
+      
+      if (stdout) {
+        resolve(stdout);
+      } else {
+        reject(new Error(`Process exited with code ${code}, signal ${signal}`));
+      }
+    });
+    
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
+/**
+ * Execute discovery via CLI
+ */
+async function executeViaCLI(cli: 'openclaw' | 'clawdbot', job: DiscoveryJob): Promise<DiscoveryResult | null> {
   const agent = await getDefaultAgent(cli);
   if (!agent) {
-    logger.warn(`[${cli}] No agent configured (run "${cli} agents list" to see agents)`);
+    logger.warn(`[${cli}] No agent configured`);
     return null;
   }
   
   const message = `${job.systemPrompt}\n\n---\n\n${job.userPrompt}\n\nReturn ONLY valid JSON.`;
-  const escapedMessage = message
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\$/g, '\\$')
-    .replace(/`/g, '\\`');
-  
-  const cmd = `${cli} agent --local --json --timeout ${TIMEOUT_SECONDS} --agent ${agent} -m "${escapedMessage}"`;
-  logger.info(`[${cli}] Starting discovery`, { 
-    agent, 
-    cliTimeoutSeconds: TIMEOUT_SECONDS,  // CLI told to return by this time
-    nodeKillMs: NODE_TIMEOUT_MS,        // Node kills only if still running
-    commandPreview: `${cli} agent --local --json --timeout ${TIMEOUT_SECONDS} --agent ${agent} -m "<...>"`,
-  });
-  const startMs = Date.now();
   
   try {
-    const { stdout, stderr } = await execAsync(cmd, {
-      timeout: NODE_TIMEOUT_MS,  // Safety net only; CLI should return by TIMEOUT_SECONDS
-      maxBuffer: 10 * 1024 * 1024,
-    });
-    
-    const elapsedMs = Date.now() - startMs;
-    if (stderr?.trim()) {
-      logger.info(`[${cli}] stderr`, { stderr: stderr.trim().slice(0, 500) });
+    const stdout = await runCLI(cli, agent, message);
+    const result = parseResult(stdout, cli);
+    if (result) {
+      logger.info(`[${cli}] Got ${result.candidates.length} candidates`);
     }
-    logger.info(`[${cli}] Process finished`, { elapsedMs, stdoutLength: stdout?.length ?? 0 });
-    
-    return parseResponse(stdout, cli);
-  } catch (error: any) {
-    const elapsedMs = Date.now() - startMs;
-    const isTimeout = error.killed || error.signal === 'SIGTERM';
-    
-    if (isTimeout) {
-      logger.warn(`[${cli}] Node killed process after ${(NODE_TIMEOUT_MS / 1000)}s (no graceful return)`, {
-        elapsedMs,
-        killed: error.killed,
-        signal: error.signal,
-        stderrPreview: error.stderr?.slice?.(0, 300),
-        stdoutLength: error.stdout?.length ?? 0,
-      });
-    } else {
-      logger.warn(`[${cli}] Execution failed`, { 
-        error: error.message, 
-        elapsedMs,
-        stderrPreview: error.stderr?.slice?.(0, 300),
-        stdoutLength: error.stdout?.length ?? 0,
-      });
-    }
-    
-    // Try to recover partial results on timeout
-    if (isTimeout && error.stdout) {
-      logger.info(`[${cli}] Attempting to parse partial stdout...`);
-      const partial = parseResponse(error.stdout, cli);
-      if (partial) {
-        partial.metadata.completed = false;
-        logger.info(`[${cli}] Recovered partial results`, { candidates: partial.candidates.length });
-        return partial;
-      }
-    }
+    return result;
+  } catch (err: any) {
+    logger.warn(`[${cli}] Failed`, { error: err.message });
     return null;
   }
 }
 
 /**
- * Execute discovery with fallback chain:
- * 1. OpenClaw CLI
- * 2. Clawdbot CLI  
- * 3. Simulated data
+ * Main entry: try OpenClaw, then Clawdbot, then simulated
  */
 export async function executeDiscovery(job: DiscoveryJob): Promise<DiscoveryResult> {
-  logger.info('Discovery starting', { 
-    cliTimeoutSeconds: TIMEOUT_SECONDS,  // Agent should return by this
-    nodeKillSeconds: TIMEOUT_SECONDS + GRACE_SECONDS,
-    promptLength: (job.systemPrompt + job.userPrompt).length,
-  });
+  logger.info('Starting discovery', { timeout: TIMEOUT_SECONDS });
   
-  // Try OpenClaw
-  const hasOpenClaw = await checkCommand('openclaw');
-  logger.info('OpenClaw check', { available: hasOpenClaw });
-  if (hasOpenClaw) {
-    logger.info('Trying OpenClaw...');
+  if (await checkCommand('openclaw')) {
+    logger.info('Trying openclaw...');
     const result = await executeViaCLI('openclaw', job);
-    if (result?.candidates.length) {
-      logger.info('Discovery completed via OpenClaw', { count: result.candidates.length });
-      return result;
-    }
-    logger.info('OpenClaw returned no usable results, trying fallback');
+    if (result?.candidates.length) return result;
   }
   
-  // Try Clawdbot
-  const hasClawdbot = await checkCommand('clawdbot');
-  logger.info('Clawdbot check', { available: hasClawdbot });
-  if (hasClawdbot) {
-    logger.info('Trying Clawdbot...');
+  if (await checkCommand('clawdbot')) {
+    logger.info('Trying clawdbot...');
     const result = await executeViaCLI('clawdbot', job);
-    if (result?.candidates.length) {
-      logger.info('Discovery completed via Clawdbot', { count: result.candidates.length });
-      return result;
-    }
-    logger.info('Clawdbot returned no usable results');
+    if (result?.candidates.length) return result;
   }
   
-  // Fallback to simulated
-  logger.warn('Using simulated data (no CLI available or no valid results from OpenClaw/Clawdbot)');
+  logger.warn('No CLI available or no results, using simulated data');
   return getSimulatedResult();
 }
 
 /**
- * Generate simulated discovery result
+ * Simulated result for testing
  */
 function getSimulatedResult(): DiscoveryResult {
   return {
@@ -267,32 +230,20 @@ function getSimulatedResult(): DiscoveryResult {
         handle: '@sjenkins_growth',
         role: 'Head of Growth',
         company: 'CloudScale AI',
-        why_match: ['B2B content partnerships interest', 'Active in SaaS communities'],
-        evidence_urls: ['https://linkedin.com/in/sjenkins-growth', 'https://cloudscale.ai/about'],
+        why_match: ['B2B content partnerships interest'],
+        evidence_urls: ['https://linkedin.com/in/sjenkins-growth'],
         risk_flags: [],
-        scores: { relevance: 95, intent: 88, credibility: 90, recency: 98, engagement: 85, final_score: 92.2 },
-        last_activity: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        suggested_intro: "Hi Sarah, saw your content about CloudScale. Would you be open to a quick chat?",
-      },
-      {
-        name: 'Marcus Thorne',
-        handle: '@mthorne_dev',
-        role: 'Founder',
-        company: 'StackFlow Solutions',
-        why_match: ['Technical Founder persona', 'Verified LinkedIn presence'],
-        evidence_urls: ['https://linkedin.com/in/mthorne', 'https://stackflow.io/about'],
-        risk_flags: ['low_evidence'],
-        scores: { relevance: 82, intent: 65, credibility: 92, recency: 70, engagement: 60, final_score: 76.5 },
-        last_activity: new Date(Date.now() - 12 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        suggested_intro: "Hi Marcus, impressive work on StackFlow. Our content ops framework might interest you.",
+        scores: { relevance: 95, intent: 88, final_score: 92 },
+        last_activity: new Date(Date.now() - 4 * 86400000).toISOString().split('T')[0],
+        suggested_intro: "Hi Sarah, would you be open to a quick chat?",
       }
     ],
     summary: {
-      headline: 'Found 2 candidates (simulated)',
-      key_insights: ['Using simulated data - install openclaw or clawdbot for real discovery'],
-      venues_searched: ['linkedin', 'web'],
+      headline: 'Found 1 candidate (simulated)',
+      key_insights: ['Using simulated data'],
+      venues_searched: ['web'],
     },
-    metadata: { searches_performed: 0, pages_fetched: 0, candidates_evaluated: 2 },
+    metadata: { searches_performed: 0, pages_fetched: 0, candidates_evaluated: 1 },
     source: 'simulated',
   };
 }
