@@ -43,7 +43,7 @@
         },
         "skill_version": {
           "type": "string",
-          "description": "Version of claw-clawbridge skill used"
+          "description": "Version of clawbridge-skill-latest skill used"
         }
       }
     },

@@ -1,6 +1,6 @@
 # clawbridge-runner
 
-CLI runner for the claw-clawbridge skill. Executes nightly and delivers Connection Briefs to your preferred channel.
+CLI runner for the clawbridge-skill-latest skill. Executes nightly and delivers Connection Briefs to your preferred channel.
 
 ## Features
 
