@@ -18,7 +18,7 @@ export interface ConnectionBrief {
     pages_fetched: number;
     candidates_evaluated: number;
     skill_version: string;
-    discovery_source?: 'openclaw' | 'clawdbot' | 'simulated' | 'dry_run';
+    discovery_source?: 'openclaw' | 'dry_run';
   };
   candidates: Candidate[];
   next_actions: NextAction[];

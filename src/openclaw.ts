@@ -32,7 +32,18 @@ export interface DiscoveryResult {
     candidates_evaluated: number;
     completed?: boolean;
   };
-  source: 'openclaw' | 'clawdbot' | 'simulated';
+  source: 'openclaw';
+}
+
+/**
+ * Expected shape of JSON parsed from agent text (inner JSON inside CLI payloads).
+ * The CLI returns an outer wrapper; we extract payload text and parse it as this.
+ */
+export interface AgentOutputJson {
+  candidates?: any[];
+  summary?: { headline?: string; key_insights?: string[]; venues_searched?: string[] };
+  metadata?: { searches_performed?: number; pages_fetched?: number; completed?: boolean };
+  status?: string;
 }
 
 /**
@@ -61,21 +72,40 @@ async function getDefaultAgent(cli: string): Promise<string | null> {
 }
 
 /**
- * Extract JSON from agent text response
+ * Extract JSON from agent text response.
+ * Expects AgentOutputJson shape (object with candidates, optional summary/metadata/status).
  */
-function extractJson(text: string): any | null {
-  try { return JSON.parse(text); } catch {}
-  
+function extractJson(text: string): AgentOutputJson | null {
+  let lastError: string | undefined;
+  try {
+    return JSON.parse(text) as AgentOutputJson;
+  } catch (e) {
+    lastError = e instanceof Error ? e.message : String(e);
+  }
+
   const jsonBlock = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   if (jsonBlock) {
-    try { return JSON.parse(jsonBlock[1]); } catch {}
+    try {
+      return JSON.parse(jsonBlock[1]) as AgentOutputJson;
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e);
+    }
   }
-  
+
   const jsonObj = text.match(/\{[\s\S]*"candidates"[\s\S]*\}/);
   if (jsonObj) {
-    try { return JSON.parse(jsonObj[0]); } catch {}
+    try {
+      return JSON.parse(jsonObj[0]) as AgentOutputJson;
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e);
+    }
   }
-  
+
+  logger.warn('Failed to parse agent text as JSON', {
+    parseError: lastError,
+    textPreview: text.slice(0, 500),
+    textLength: text.length,
+  });
   return null;
 }
 
@@ -101,7 +131,7 @@ function extractPayloadText(json: any): string {
  * Parse CLI JSON output into DiscoveryResult
  * V3.1: Uses extractPayloadText to find agent output from payloads
  */
-function parseResult(stdout: string, source: 'openclaw' | 'clawdbot'): DiscoveryResult | null {
+function parseResult(stdout: string, source: 'openclaw'): DiscoveryResult | null {
   let json: any;
   try {
     json = JSON.parse(stdout);
@@ -129,9 +159,11 @@ function parseResult(stdout: string, source: 'openclaw' | 'clawdbot'): Discovery
   logger.debug(`[${source}] Extracted agent text (first 200 chars):`, agentText.slice(0, 200));
   
   const data = extractJson(agentText);
-  
+
   if (!data) {
     logger.warn(`[${source}] Could not parse JSON from agent text`);
+    // Log the full agent text so we can see error messages (e.g. rate limiting)
+    logger.error(`[${source}] Agent text content that failed to parse:`, agentText);
     return null;
   }
   
@@ -153,7 +185,11 @@ function parseResult(stdout: string, source: 'openclaw' | 'clawdbot'): Discovery
   
   return {
     candidates: data.candidates,
-    summary: data.summary || { headline: `Found ${data.candidates.length} candidates`, key_insights: [], venues_searched: [] },
+    summary: {
+      headline: data.summary?.headline ?? `Found ${data.candidates.length} candidates`,
+      key_insights: data.summary?.key_insights ?? [],
+      venues_searched: data.summary?.venues_searched ?? [],
+    },
     metadata: {
       searches_performed: data.metadata?.searches_performed || 0,
       pages_fetched: data.metadata?.pages_fetched || 0,
@@ -241,10 +277,10 @@ function runCLI(cli: string, agent: string, message: string, timeoutSeconds: num
  * V3.1: Added timeout parameter
  */
 async function executeViaCLI(
-  cli: 'openclaw' | 'clawdbot', 
   job: DiscoveryJob,
   timeoutSeconds: number
 ): Promise<DiscoveryResult | null> {
+  const cli = 'openclaw';
   const agent = await getDefaultAgent(cli);
   if (!agent) {
     logger.warn(`[${cli}] No agent configured`);
@@ -284,8 +320,8 @@ export interface DiscoveryOptions {
 }
 
 /**
- * Main entry: try OpenClaw, then Clawdbot, then simulated
- * V3.1: Added options for timeout and mode
+ * Main entry: execute discovery via OpenClaw CLI
+ * V3.2: Simplified - only uses openclaw, fails directly if unavailable or fails
  */
 export async function executeDiscovery(
   job: DiscoveryJob, 
@@ -296,63 +332,29 @@ export async function executeDiscovery(
   
   logger.info('Starting discovery', { timeout, mode });
   
-  if (await checkCommand('openclaw')) {
-    logger.info('Trying openclaw...');
-    const result = await executeViaCLI('openclaw', job, timeout);
-    
-    // V3.1: For smoke mode, accept empty candidates (just pipeline verification)
-    if (mode === 'smoke' && result) {
-      return result;
-    }
-    
-    // For real mode, require at least some candidates
-    if (result?.candidates.length) {
-      return result;
-    }
-    
-    // If openclaw returned a result but no candidates, still return it for smoke
-    if (result) {
-      logger.info('openclaw returned result with no candidates');
-      return result;
-    }
+  if (!(await checkCommand('openclaw'))) {
+    throw new Error('openclaw CLI is not available. Please install it first.');
   }
   
-  if (await checkCommand('clawdbot')) {
-    logger.info('Trying clawdbot...');
-    const result = await executeViaCLI('clawdbot', job, timeout);
-    if (result?.candidates.length) return result;
-    if (mode === 'smoke' && result) return result;
+  logger.info('Running openclaw...');
+  const result = await executeViaCLI(job, timeout);
+  
+  if (!result) {
+    throw new Error('openclaw failed to produce a valid result. Check logs for details.');
   }
   
-  logger.warn('No CLI available or no results, using simulated data');
-  return getSimulatedResult();
+  // V3.1: For smoke mode, accept empty candidates (just pipeline verification)
+  if (mode === 'smoke') {
+    return result;
+  }
+  
+  // For real mode, require at least some candidates
+  if (result.candidates.length) {
+    return result;
+  }
+  
+  // If openclaw returned a result but no candidates, still return it
+  logger.info('openclaw returned result with no candidates');
+  return result;
 }
 
-/**
- * Simulated result for testing
- */
-function getSimulatedResult(): DiscoveryResult {
-  return {
-    candidates: [
-      {
-        name: 'Sarah Jenkins',
-        handle: '@sjenkins_growth',
-        role: 'Head of Growth',
-        company: 'CloudScale AI',
-        why_match: ['B2B content partnerships interest'],
-        evidence_urls: ['https://linkedin.com/in/sjenkins-growth'],
-        risk_flags: [],
-        scores: { relevance: 95, intent: 88, final_score: 92 },
-        last_activity: new Date(Date.now() - 4 * 86400000).toISOString().split('T')[0],
-        suggested_intro: "Hi Sarah, would you be open to a quick chat?",
-      }
-    ],
-    summary: {
-      headline: 'Found 1 candidate (simulated)',
-      key_insights: ['Using simulated data'],
-      venues_searched: ['web'],
-    },
-    metadata: { searches_performed: 0, pages_fetched: 0, candidates_evaluated: 1 },
-    source: 'simulated',
-  };
-}
