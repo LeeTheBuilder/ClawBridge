@@ -83,20 +83,10 @@ export function validateOrThrow(brief: ConnectionBrief): void {
 }
 
 /**
- * Additional hard validation rules beyond JSON schema
+ * Additional hard validation rules beyond JSON schema (minimal – only required for upload)
  */
 export function validateHardRules(brief: ConnectionBrief): ValidationResult {
   const errors: ValidationError[] = [];
-
-  // Rule: Each candidate must have at least 2 evidence URLs
-  for (const candidate of brief.candidates) {
-    if (!candidate.evidence_urls || candidate.evidence_urls.length < 2) {
-      errors.push({
-        path: `/candidates/${candidate.handle || candidate.name}/evidence_urls`,
-        message: `Candidate "${candidate.name}" has fewer than 2 evidence URLs (required: 2, found: ${candidate.evidence_urls?.length || 0})`,
-      });
-    }
-  }
 
   // Rule: workspace_id must be present and non-empty
   if (!brief.workspace_id || typeof brief.workspace_id !== 'string' || !brief.workspace_id.trim()) {
