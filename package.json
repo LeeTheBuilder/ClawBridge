@@ -1,6 +1,6 @@
 {
   "name": "clawbridge-runner",
-  "version": "3.1.8",
+  "version": "3.2.0",
   "description": "CLI runner for clawbridge-skill-latest skill - executes nightly and delivers Connection Briefs",
   "main": "dist/index.js",
   "bin": {
