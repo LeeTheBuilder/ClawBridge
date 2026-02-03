@@ -1,8 +1,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import axios from 'axios';
 import { loadConfig, Config } from './config';
 import { logger } from './logger';
+
+const execAsync = promisify(exec);
 
 interface CheckResult {
   name: string;
@@ -53,6 +57,12 @@ export async function runDoctor(configPath: string): Promise<void> {
   if (config?.output?.dir) {
     results.push(checkOutputDir(config.output.dir));
   }
+
+  // Check 7: OpenClaw CLI available
+  results.push(await checkOpenClawCLI());
+
+  // Check 8: OpenClaw web tools configured
+  results.push(await checkOpenClawTools());
 
   // Print results
   console.log('─'.repeat(60));
@@ -251,5 +261,148 @@ function checkOutputDir(outputDir: string): CheckResult {
       message: `Not writable: ${absolutePath}`,
       fix: 'Check directory permissions',
     };
+  }
+}
+
+async function checkOpenClawCLI(): Promise<CheckResult> {
+  try {
+    const { stdout } = await execAsync('which openclaw', { timeout: 5000 });
+    const path = stdout.trim();
+    
+    // Get version
+    try {
+      const { stdout: versionOut } = await execAsync('openclaw --version', { timeout: 5000 });
+      const version = versionOut.trim();
+      return {
+        name: 'OpenClaw CLI',
+        status: 'pass',
+        message: `Found: ${path} (${version})`,
+      };
+    } catch {
+      return {
+        name: 'OpenClaw CLI',
+        status: 'pass',
+        message: `Found: ${path}`,
+      };
+    }
+  } catch {
+    return {
+      name: 'OpenClaw CLI',
+      status: 'fail',
+      message: 'OpenClaw CLI not found in PATH',
+      fix: 'Install OpenClaw: npm install -g openclaw',
+    };
+  }
+}
+
+export interface OpenClawToolsConfig {
+  web?: {
+    search?: { enabled?: boolean; apiKey?: string };
+    fetch?: { enabled?: boolean };
+  };
+}
+
+async function checkOpenClawTools(): Promise<CheckResult> {
+  try {
+    const { stdout } = await execAsync('openclaw config get tools', { timeout: 10000 });
+    
+    // Parse JSON from stdout (skip deprecation warnings)
+    const jsonMatch = stdout.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return {
+        name: 'OpenClaw Web Tools',
+        status: 'warn',
+        message: 'Could not parse tools config',
+        fix: 'Run: openclaw configure',
+      };
+    }
+    
+    const tools: OpenClawToolsConfig = JSON.parse(jsonMatch[0]);
+    const issues: string[] = [];
+    const configured: string[] = [];
+    
+    // Check web_search
+    if (tools.web?.search?.enabled) {
+      if (tools.web.search.apiKey) {
+        configured.push('web_search (Brave API)');
+      } else {
+        issues.push('web_search enabled but no API key');
+      }
+    } else {
+      issues.push('web_search disabled');
+    }
+    
+    // Check web_fetch
+    if (tools.web?.fetch?.enabled) {
+      configured.push('web_fetch');
+    } else {
+      issues.push('web_fetch disabled');
+    }
+    
+    if (issues.length === 0) {
+      return {
+        name: 'OpenClaw Web Tools',
+        status: 'pass',
+        message: `Configured: ${configured.join(', ')}`,
+      };
+    } else if (configured.length > 0) {
+      return {
+        name: 'OpenClaw Web Tools',
+        status: 'warn',
+        message: `Partial: ${configured.join(', ')}. Issues: ${issues.join(', ')}`,
+        fix: 'Run: openclaw configure (enable web tools)',
+      };
+    } else {
+      return {
+        name: 'OpenClaw Web Tools',
+        status: 'fail',
+        message: `Not configured: ${issues.join(', ')}`,
+        fix: 'Run: openclaw configure (set up Brave API key and enable web_fetch)',
+      };
+    }
+  } catch (error: any) {
+    return {
+      name: 'OpenClaw Web Tools',
+      status: 'warn',
+      message: 'Could not check tools config',
+      fix: 'Run: openclaw configure',
+    };
+  }
+}
+
+/**
+ * Check OpenClaw tools configuration (exported for use by run.ts)
+ */
+export async function getOpenClawToolsStatus(): Promise<{ 
+  available: boolean; 
+  webSearch: boolean; 
+  webFetch: boolean;
+  issues: string[];
+}> {
+  try {
+    const { stdout } = await execAsync('openclaw config get tools', { timeout: 10000 });
+    const jsonMatch = stdout.match(/\{[\s\S]*\}/);
+    
+    if (!jsonMatch) {
+      return { available: false, webSearch: false, webFetch: false, issues: ['Could not parse config'] };
+    }
+    
+    const tools: OpenClawToolsConfig = JSON.parse(jsonMatch[0]);
+    const issues: string[] = [];
+    
+    const webSearch = !!(tools.web?.search?.enabled && tools.web?.search?.apiKey);
+    const webFetch = !!tools.web?.fetch?.enabled;
+    
+    if (!webSearch) issues.push('web_search not configured (need Brave API key)');
+    if (!webFetch) issues.push('web_fetch disabled');
+    
+    return { 
+      available: webSearch || webFetch, 
+      webSearch, 
+      webFetch, 
+      issues 
+    };
+  } catch {
+    return { available: false, webSearch: false, webFetch: false, issues: ['OpenClaw not available'] };
   }
 }

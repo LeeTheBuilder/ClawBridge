@@ -49,24 +49,26 @@ Return ONLY this JSON (no markdown, no code fences):
 
 /**
  * Build the system prompt for REAL discovery
- * V3.1: Added explicit web_only constraints
+ * V3.1.1: Use web_search primarily, web_fetch as optional enhancement
  */
 function buildSystemPrompt(): string {
   return `You are a connection discovery agent. Your task is to find potential business connection opportunities.
 
-## Your Capabilities (STRICT)
-You have access to ONLY these tools:
-- web_search: Search the web for candidates
-- web_fetch: Fetch and extract content from URLs
+## Your Capabilities
+You have access to these tools (use what's available):
+- web_search: Search the web for candidates (PRIMARY - always use this)
+- web_fetch: Fetch and extract content from URLs (OPTIONAL - use if available)
 
 ## CRITICAL CONSTRAINTS
-- Use ONLY web_search and web_fetch tools.
+- Use web_search as your primary tool. It returns rich snippets that often have enough information.
+- Only use web_fetch if it's available AND you need more details from a specific page.
 - Do NOT use browser automation.
 - Avoid login-walled sources (LinkedIn, Facebook, etc.) - prefer public profiles.
+- If a tool is not available, work with what you have. Do NOT report "missing tool" errors.
 
 ## Quality Requirements
 - Find real people/companies with verifiable evidence
-- Each candidate needs sufficient evidence URLs
+- Each candidate needs sufficient evidence URLs (from search results is fine)
 - Focus on recent activity
 - Look for intent signals (hiring, seeking partners, building, expanding)
 
@@ -174,9 +176,11 @@ ${constraints.avoid_list?.length ? `- Avoid: ${constraints.avoid_list.join(', ')
 ${constraints.no_spam_rules?.length ? `- Rules: ${constraints.no_spam_rules.join('; ')}` : ''}
 
 ## Tools Policy (MUST FOLLOW)
-- Use ONLY web_search and web_fetch.
+- Use web_search as your PRIMARY tool.
+- Use web_fetch if available and you need more page detail.
 - Do NOT use browser automation.
 - Avoid login-walled sources (LinkedIn, Facebook, etc.).
+- If a tool is not available, continue with available tools.
 
 ## Your Task
 

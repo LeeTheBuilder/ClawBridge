@@ -18,7 +18,7 @@ const program = new Command();
 program
   .name('clawbridge')
   .description('CLI runner for Clawbridge - find high-quality business connections')
-  .version('3.1.0');
+  .version('3.1.1');
 
 program
   .command('run')
@@ -27,7 +27,7 @@ program
   .option('-o, --output <dir>', 'Output directory for results')
   .option('-p, --profile <name>', 'Profile name to use (default: default)')
   .option('-t, --timeout <seconds>', 'Timeout in seconds (default: 60)', '60')
-  .option('-m, --mode <mode>', 'Discovery mode: smoke (verify pipeline) or real (actual discovery)', 'smoke')
+  .option('-m, --mode <mode>', 'Discovery mode: real (actual discovery) or smoke (verify pipeline)', 'real')
   .option('--no-upload', 'Skip vault upload')
   .option('--dry-run', 'Preview what would be done without executing')
   .option('--debug', 'Enable debug logging (same as LOG_LEVEL=debug)')

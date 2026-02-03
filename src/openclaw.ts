@@ -14,8 +14,9 @@ const execAsync = promisify(exec);
 
 // ============================================================================
 // TIMEOUT CONFIG - Single timeout variable, passed to CLI --timeout
+// V3.1.1: Default 5 minutes (300s) instead of 1 minute
 // ============================================================================
-export const DEFAULT_TIMEOUT_SECONDS = 60;
+export const DEFAULT_TIMEOUT_SECONDS = 300;
 
 export interface DiscoveryResult {
   candidates: any[];
@@ -241,14 +242,16 @@ async function executeViaCLI(
     return null;
   }
   
-  // V3.1: Add hard constraints at the end of message (strongest position)
+  // V3.1.1: More flexible constraints - web_search primary, web_fetch optional
   const hardConstraints = `
 
 ---
 ## HARD CONSTRAINTS (MUST FOLLOW)
-- Use ONLY web_search and web_fetch.
+- Use web_search as your PRIMARY tool. It works reliably.
+- Use web_fetch only if available and needed for detail pages.
 - Do NOT use browser automation.
 - Avoid login-walled sources (LinkedIn, Facebook, etc.).
+- If a tool is unavailable, work with what you have - do NOT fail.
 - Return ONLY valid JSON. No markdown. No code fences. No commentary.`;
 
   const message = `${job.systemPrompt}\n\n---\n\n${job.userPrompt}${hardConstraints}`;
