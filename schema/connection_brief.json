@@ -50,7 +50,7 @@
     "candidates": {
       "type": "array",
       "minItems": 0,
-      "maxItems": 10,
+      "maxItems": 20,
       "description": "Top K ranked candidates for connection",
       "items": {
         "type": "object",
@@ -80,7 +80,7 @@
           "why_match": {
             "type": "array",
             "minItems": 1,
-            "maxItems": 5,
+            "maxItems": 8,
             "items": {
               "type": "string"
             },
@@ -153,12 +153,12 @@
           "suggested_intro": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 1000,
+            "maxLength": 2000,
             "description": "Draft introduction message"
           },
           "suggested_followup": {
             "type": "string",
-            "maxLength": 500,
+            "maxLength": 1000,
             "description": "Draft follow-up message"
           }
         }
@@ -207,7 +207,7 @@
       "properties": {
         "headline": {
           "type": "string",
-          "maxLength": 100,
+          "maxLength": 500,
           "description": "One-line summary of the run results"
         },
         "key_insights": {
