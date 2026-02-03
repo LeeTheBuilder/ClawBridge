@@ -7,6 +7,7 @@
 
 import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
+import { randomUUID } from 'crypto';
 import { logger } from './logger';
 import { DiscoveryJob } from './prompts';
 
@@ -172,11 +173,19 @@ function parseResult(stdout: string, source: 'openclaw' | 'clawdbot'): Discovery
  */
 function runCLI(cli: string, agent: string, message: string, timeoutSeconds: number): Promise<string> {
   return new Promise((resolve, reject) => {
-    // V3.1: Removed --local, CLI handles timeout internally
-    const args = ['agent', '--json', '--timeout', String(timeoutSeconds), '--agent', agent, '-m', message];
+    // V3.1.2: Use unique session-id to avoid lock conflicts with chat sessions
+    const sessionId = randomUUID();
+    const args = [
+      'agent',
+      '--json',
+      '--timeout', String(timeoutSeconds),
+      '--agent', agent,
+      '--session-id', sessionId,
+      '-m', message,
+    ];
     
-    logger.info(`[${cli}] Spawning process`, { timeout: timeoutSeconds, agent });
-    logger.debug(`[${cli}] Command: ${cli} ${args.join(' ').slice(0, 200)}...`);
+    logger.info(`[${cli}] Spawning process`, { timeout: timeoutSeconds, agent, sessionId });
+    logger.debug(`[${cli}] Command: ${cli} ${args.join(' ').slice(0, 300)}...`);
     
     const proc = spawn(cli, args, { 
       stdio: ['ignore', 'pipe', 'pipe'],
