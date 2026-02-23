@@ -55,6 +55,7 @@ program
       
       await runSkill({
         config,
+        configPath: options.config,
         outputDir,
         upload: options.upload !== false,
         dryRun: options.dryRun || false,
