@@ -146,19 +146,6 @@ export async function runSkill(options: RunOptions): Promise<ConnectionBrief> {
       if (uploadResult) {
         vaultUrl = uploadResult.vaultUrl;
         logger.info('Vault upload successful', { vaultUrl });
-
-        // Auto-populate constraints.avoid_list with discovered candidates
-        // so subsequent runs can bias away from repeats.
-        if (options.configPath) {
-          try {
-            const added = updateAvoidListInConfig(options.configPath, brief);
-            if (added > 0) {
-              logger.info('Updated constraints.avoid_list from latest run', { added });
-            }
-          } catch (err: any) {
-            logger.warn('Failed to update constraints.avoid_list', { error: err?.message || String(err) });
-          }
-        }
       }
     } catch (error: any) {
       logger.error('Vault upload failed', { error: error.message });
@@ -166,6 +153,20 @@ export async function runSkill(options: RunOptions): Promise<ConnectionBrief> {
     }
   }
   
+  // Auto-populate constraints.avoid_list with discovered candidates
+  // so subsequent runs bias away from repeats. This runs regardless of
+  // vault upload result (as long as run is real and we have a config path).
+  if (!dryRun && options.configPath) {
+    try {
+      const added = updateAvoidListInConfig(options.configPath, brief);
+      if (added > 0) {
+        logger.info('Updated constraints.avoid_list from latest run', { added });
+      }
+    } catch (err: any) {
+      logger.warn('Failed to update constraints.avoid_list', { error: err?.message || String(err) });
+    }
+  }
+
   // Clean up old runs
   if (config.output?.keep_runs) {
     cleanupOldRuns(outputPath, config.output.keep_runs);
