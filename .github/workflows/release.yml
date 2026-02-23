@@ -74,28 +74,28 @@ jobs:
 
             **macOS Apple Silicon:**
             ```bash
-            curl -L https://github.com/moltlife/clawbridge-runner/releases/download/${{ steps.version.outputs.version }}/clawbridge-macos-arm64 -o clawbridge
+            curl -L https://github.com/LeeTheBuilder/ClawBridge/releases/download/${{ steps.version.outputs.version }}/clawbridge-macos-arm64 -o clawbridge
             chmod +x clawbridge
             sudo mv clawbridge /usr/local/bin/
             ```
 
             **macOS Intel:**
             ```bash
-            curl -L https://github.com/moltlife/clawbridge-runner/releases/download/${{ steps.version.outputs.version }}/clawbridge-macos-x64 -o clawbridge
+            curl -L https://github.com/LeeTheBuilder/ClawBridge/releases/download/${{ steps.version.outputs.version }}/clawbridge-macos-x64 -o clawbridge
             chmod +x clawbridge
             sudo mv clawbridge /usr/local/bin/
             ```
 
             **Linux x64:**
             ```bash
-            curl -L https://github.com/moltlife/clawbridge-runner/releases/download/${{ steps.version.outputs.version }}/clawbridge-linux-x64 -o clawbridge
+            curl -L https://github.com/LeeTheBuilder/ClawBridge/releases/download/${{ steps.version.outputs.version }}/clawbridge-linux-x64 -o clawbridge
             chmod +x clawbridge
             sudo mv clawbridge /usr/local/bin/
             ```
 
             **Linux ARM64:**
             ```bash
-            curl -L https://github.com/moltlife/clawbridge-runner/releases/download/${{ steps.version.outputs.version }}/clawbridge-linux-arm64 -o clawbridge
+            curl -L https://github.com/LeeTheBuilder/ClawBridge/releases/download/${{ steps.version.outputs.version }}/clawbridge-linux-arm64 -o clawbridge
             chmod +x clawbridge
             sudo mv clawbridge /usr/local/bin/
             ```

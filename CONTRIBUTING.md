@@ -5,7 +5,7 @@ Thanks for contributing.
 ## Quick Start
 
 ```bash
-git clone https://github.com/moltlife/clawbridge-runner.git
+git clone https://github.com/LeeTheBuilder/ClawBridge.git
 cd clawbridge-runner
 npm install
 npm run build
