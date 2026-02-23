@@ -1,13 +1,53 @@
 # ClawBridge
 
-Open-source CLI runner for finding high-quality business connection opportunities.
+ClawBridge is an open-source CLI that helps you discover relevant business connection opportunities from your own workspace context.
 
-## What it does
+It is designed for **signal sharing and workflow automation**, not spam automation.
 
-- Runs discovery from your workspace profile
-- Produces JSON + markdown outputs locally
-- Uploads results to ClawBridge Vault (optional)
-- Automatically updates `constraints.avoid_list` from discovered candidates so reruns bias toward new people
+---
+
+## TL;DR
+
+- You connect your workspace profile
+- `clawbridge run` discovers potential people/companies to reach out to
+- Results are saved locally (JSON + Markdown)
+- Optional upload to ClawBridge Vault
+- Future runs auto-avoid previously discovered candidates via `constraints.avoid_list`
+
+---
+
+## Prerequisite
+
+ClawBridge works with an OpenClaw workflow setup.
+
+- Install OpenClaw first
+- Then install/use ClawBridge
+
+If you are new to OpenClaw, start from OpenClaw docs first.
+
+---
+
+## What ClawBridge actually does
+
+### 1) Reads your workspace profile and constraints
+It uses your configured context (industry, target profile, constraints) to search for better-fit opportunities.
+
+### 2) Runs discovery and ranking
+It gathers candidate leads and ranks them based on relevance.
+
+### 3) Exports usable outputs
+Each run generates local artifacts you can inspect, edit, or feed into your own workflow:
+
+- `output/*.json`
+- `output/*.md`
+
+### 4) Optional Vault sync
+If Vault is configured, results can be uploaded for centralized tracking.
+
+### 5) Prevents repeated suggestions
+After discovery, candidate identifiers can be appended into `constraints.avoid_list` in your active config (with backup), so the next run biases toward net-new people.
+
+---
 
 ## Screenshots
 
@@ -17,13 +57,17 @@ Open-source CLI runner for finding high-quality business connection opportunitie
 ### CLI run output
 ![Clawbridge run output](docs/screenshots/run-output.png)
 
+---
+
 ## Install
+
+### Option A: Installer (recommended)
 
 ```bash
 curl -fsSL https://clawbridge.cloud/install | bash
 ```
 
-Or from source:
+### Option B: From source
 
 ```bash
 git clone https://github.com/LeeTheBuilder/ClawBridge.git
@@ -33,10 +77,12 @@ npm run build
 npm link
 ```
 
+---
+
 ## Quick start
 
-1. Create workspace on clawbridge.cloud
-2. Link workspace:
+1. Create a workspace on `clawbridge.cloud`
+2. Link your workspace:
 
 ```bash
 clawbridge link CB-XXXXXX
@@ -48,6 +94,8 @@ clawbridge link CB-XXXXXX
 clawbridge run
 ```
 
+---
+
 ## Core commands
 
 ```bash
@@ -58,18 +106,27 @@ clawbridge validate
 clawbridge schedule --cron "0 21 * * *"
 ```
 
-## Config location
+---
+
+## Config
 
 Default config path:
 
 - `~/.clawbridge/config.yml`
 
-Tip: pass explicit config with `-c` when needed.
+Use explicit config when needed:
 
-## Release process
+```bash
+clawbridge run -c /path/to/config.yml
+```
 
-- Tag push `v*` triggers binary release workflow
-- Manual dispatch is also supported in GitHub Actions
+---
+
+## Chinese README
+
+中文文档：[`README.zh-CN.md`](./README.zh-CN.md)
+
+---
 
 ## Security
 
