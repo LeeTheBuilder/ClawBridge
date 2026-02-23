@@ -10,6 +10,16 @@ CLI runner for the clawbridge-skill-latest skill. Executes nightly and delivers 
 - **Local Storage** - JSON and Markdown outputs saved locally
 - **Dry Run Mode** - Test without actual execution
 
+## Screenshots
+
+### Installer / onboarding
+
+![Clawbridge install page](docs/screenshots/install-page.png)
+
+### CLI run output
+
+![Clawbridge run output](docs/screenshots/run-output.png)
+
 ## Installation
 
 ### From npm
