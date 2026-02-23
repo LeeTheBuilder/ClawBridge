@@ -219,19 +219,53 @@ function runCLI(cli: string, agent: string, message: string, timeoutSeconds: num
       '--session-id', sessionId,
       '-m', message,
     ];
-    
+
     logger.info(`[${cli}] Spawning process`, { timeout: timeoutSeconds, agent, sessionId });
     logger.debug(`[${cli}] Command: ${cli} ${args.join(' ').slice(0, 300)}...`);
-    
-    const proc = spawn(cli, args, { 
+
+    const proc = spawn(cli, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env },
     });
-    
+
     let stdout = '';
     let stderr = '';
     const startMs = Date.now();
-    
+    let settled = false;
+
+    // Wall-clock watchdog in case CLI hangs despite --timeout.
+    // Grace buffer gives OpenClaw time to flush final JSON.
+    const hardTimeoutMs = Math.max(15000, (timeoutSeconds + 20) * 1000);
+    const watchdog = setTimeout(() => {
+      if (settled) return;
+      const elapsedMs = Date.now() - startMs;
+      logger.error(`[${cli}] Hard timeout reached, terminating process`, {
+        timeoutSeconds,
+        hardTimeoutMs,
+        elapsedMs,
+        sessionId,
+      });
+
+      try {
+        proc.kill('SIGTERM');
+      } catch {
+        // ignore
+      }
+
+      // Escalate if still alive after grace.
+      setTimeout(() => {
+        if (settled) return;
+        try {
+          proc.kill('SIGKILL');
+        } catch {
+          // ignore
+        }
+      }, 3000);
+
+      settled = true;
+      reject(new Error(`openclaw process exceeded hard timeout (${hardTimeoutMs}ms)`));
+    }, hardTimeoutMs);
+
     // Stream stdout
     proc.stdout.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
@@ -241,7 +275,7 @@ function runCLI(cli: string, agent: string, message: string, timeoutSeconds: num
         logger.debug(`[${cli}] stdout: ${line.slice(0, 150)}`);
       });
     });
-    
+
     // Stream stderr (log as debug, not info)
     proc.stderr.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
@@ -250,11 +284,15 @@ function runCLI(cli: string, agent: string, message: string, timeoutSeconds: num
         logger.debug(`[${cli}] stderr: ${line.slice(0, 150)}`);
       });
     });
-    
+
     proc.on('close', (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(watchdog);
+
       const elapsedMs = Date.now() - startMs;
       logger.info(`[${cli}] Process exited`, { code, signal, elapsedMs, stdoutLen: stdout.length });
-      
+
       if (stdout) {
         resolve(stdout);
       } else if (stderr) {
@@ -264,8 +302,11 @@ function runCLI(cli: string, agent: string, message: string, timeoutSeconds: num
         reject(new Error(`Process exited with code ${code}, signal ${signal}, no output`));
       }
     });
-    
+
     proc.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(watchdog);
       logger.error(`[${cli}] Spawn error:`, err.message);
       reject(err);
     });
