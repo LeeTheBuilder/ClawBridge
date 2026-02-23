@@ -65,7 +65,42 @@ program
       });
       
       logger.info('Run completed successfully');
-    } catch (error) {
+    } catch (error: any) {
+      const message = error?.message || String(error);
+      let reason = 'unknown_error';
+
+      if (message.includes('hard timeout') || message.includes('timed out') || message.includes('timeout')) {
+        reason = 'timeout';
+      } else if (message.toLowerCase().includes('rate limit')) {
+        reason = 'rate_limited';
+      } else if (message.includes('No default agent configured')) {
+        reason = 'agent_not_configured';
+      } else if (message.includes('not valid discovery JSON payload')) {
+        reason = 'invalid_agent_output';
+      }
+
+      // Explicit user-facing failure block for terminal users.
+      console.log('');
+      console.log('─'.repeat(60));
+      console.log('');
+      console.log('❌ RUN FAILED');
+      console.log(`REASON=${reason}`);
+      console.log(`ERROR=${message}`);
+      console.log('');
+      console.log('HINTS:');
+      if (reason === 'timeout') {
+        console.log('- Increase timeout, e.g. clawbridge run --timeout 180');
+        console.log('- Check model availability with: openclaw status');
+      } else if (reason === 'rate_limited') {
+        console.log('- Wait a bit and retry');
+        console.log('- Reduce concurrent runs/tools');
+      } else {
+        console.log('- Run with --debug for more logs');
+        console.log('- Inspect: openclaw logs --follow');
+      }
+      console.log('');
+      console.log('─'.repeat(60));
+
       logger.error('Run failed:', error);
       process.exit(1);
     }

@@ -320,14 +320,13 @@ function runCLI(cli: string, agent: string, message: string, timeoutSeconds: num
 async function executeViaCLI(
   job: DiscoveryJob,
   timeoutSeconds: number
-): Promise<DiscoveryResult | null> {
+): Promise<DiscoveryResult> {
   const cli = 'openclaw';
   const agent = await getDefaultAgent(cli);
   if (!agent) {
-    logger.warn(`[${cli}] No agent configured`);
-    return null;
+    throw new Error(`[${cli}] No default agent configured. Run: openclaw agents list`);
   }
-  
+
   // V3.1.1: More flexible constraints - web_search primary, web_fetch optional
   const hardConstraints = `
 
@@ -341,17 +340,20 @@ async function executeViaCLI(
 - Return ONLY valid JSON. No markdown. No code fences. No commentary.`;
 
   const message = `${job.systemPrompt}\n\n---\n\n${job.userPrompt}${hardConstraints}`;
-  
+
   try {
     const stdout = await runCLI(cli, agent, message, timeoutSeconds);
     const result = parseResult(stdout, cli);
-    if (result) {
-      logger.info(`[${cli}] Got ${result.candidates.length} candidates`);
+    if (!result) {
+      throw new Error(`[${cli}] Returned output but not valid discovery JSON payload`);
     }
+
+    logger.info(`[${cli}] Got ${result.candidates.length} candidates`);
     return result;
   } catch (err: any) {
-    logger.error(`[${cli}] Failed`, { error: err.message });
-    return null;
+    const msg = err?.message || String(err);
+    logger.error(`[${cli}] Failed`, { error: msg });
+    throw new Error(`[${cli}] ${msg}`);
   }
 }
 
@@ -379,21 +381,17 @@ export async function executeDiscovery(
   
   logger.info('Running openclaw...');
   const result = await executeViaCLI(job, timeout);
-  
-  if (!result) {
-    throw new Error('openclaw failed to produce a valid result. Check logs for details.');
-  }
-  
+
   // V3.1: For smoke mode, accept empty candidates (just pipeline verification)
   if (mode === 'smoke') {
     return result;
   }
-  
+
   // For real mode, require at least some candidates
   if (result.candidates.length) {
     return result;
   }
-  
+
   // If openclaw returned a result but no candidates, still return it
   logger.info('openclaw returned result with no candidates');
   return result;
