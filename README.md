@@ -21,7 +21,7 @@ npm install -g clawbridge-runner
 ### From source
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/clawbridge-runner.git
+git clone https://github.com/moltlife/clawbridge-runner.git
 cd clawbridge-runner
 npm install
 npm run build

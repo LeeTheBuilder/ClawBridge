@@ -11,30 +11,11 @@ on:
         required: true
         type: string
 
-# Note: This workflow publishes to the PUBLIC repo moltlife/clawbridge-cli
-# It requires a PAT secret named CLI_RELEASE_TOKEN with repo access to clawbridge-cli
-
 jobs:
-  build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: linux-x64
-            binary_name: clawbridge-linux-x64
-          - os: ubuntu-latest
-            target: linux-arm64
-            binary_name: clawbridge-linux-arm64
-          - os: macos-latest
-            target: macos-x64
-            binary_name: clawbridge-macos-x64
-          - os: macos-latest
-            target: macos-arm64
-            binary_name: clawbridge-macos-arm64
-          - os: windows-latest
-            target: win-x64
-            binary_name: clawbridge-win-x64.exe
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -54,30 +35,6 @@ jobs:
       - name: Install pkg
         run: npm install -g @yao-pkg/pkg
 
-      - name: Package binary
-        run: |
-          pkg . --target node20-${{ matrix.target }} --output ${{ matrix.binary_name }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.binary_name }}
-          path: ${{ matrix.binary_name }}
-          retention-days: 1
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: binaries
-          merge-multiple: true
-
-      - name: List binaries
-        run: ls -la binaries/
-
       - name: Get version
         id: version
         run: |
@@ -87,25 +44,21 @@ jobs:
             echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Create checksums
-        working-directory: binaries
+      - name: Build all binaries (single runner, no artifact storage)
         run: |
-          sha256sum * > checksums.txt
+          pkg . --target node20-linux-x64 --output clawbridge-linux-x64
+          pkg . --target node20-linux-arm64 --output clawbridge-linux-arm64
+          pkg . --target node20-macos-x64 --output clawbridge-macos-x64
+          pkg . --target node20-macos-arm64 --output clawbridge-macos-arm64
+          pkg . --target node20-win-x64 --output clawbridge-win-x64.exe
 
-      # Clone the public CLI repo to create a release there
-      - name: Checkout public CLI repo
-        uses: actions/checkout@v4
-        with:
-          repository: moltlife/clawbridge-cli
-          token: ${{ secrets.CLI_RELEASE_TOKEN }}
-          path: cli-repo
+      - name: Create checksums
+        run: |
+          sha256sum clawbridge-* > checksums.txt
 
-      # Create release on the PUBLIC repo
-      - name: Create Release on Public Repo
+      - name: Create GitHub release (same repo)
         uses: softprops/action-gh-release@v1
         with:
-          repository: moltlife/clawbridge-cli
-          token: ${{ secrets.CLI_RELEASE_TOKEN }}
           tag_name: ${{ steps.version.outputs.version }}
           name: Clawbridge Runner ${{ steps.version.outputs.version }}
           body: |
@@ -117,37 +70,32 @@ jobs:
             curl -fsSL https://clawbridge.cloud/install | bash
             ```
 
-            Or using wget:
-            ```bash
-            wget -qO- https://clawbridge.cloud/install | bash
-            ```
-
             ### Manual Download
 
             **macOS Apple Silicon:**
             ```bash
-            curl -L https://github.com/moltlife/clawbridge-cli/releases/download/${{ steps.version.outputs.version }}/clawbridge-macos-arm64 -o clawbridge
+            curl -L https://github.com/moltlife/clawbridge-runner/releases/download/${{ steps.version.outputs.version }}/clawbridge-macos-arm64 -o clawbridge
             chmod +x clawbridge
             sudo mv clawbridge /usr/local/bin/
             ```
 
             **macOS Intel:**
             ```bash
-            curl -L https://github.com/moltlife/clawbridge-cli/releases/download/${{ steps.version.outputs.version }}/clawbridge-macos-x64 -o clawbridge
+            curl -L https://github.com/moltlife/clawbridge-runner/releases/download/${{ steps.version.outputs.version }}/clawbridge-macos-x64 -o clawbridge
             chmod +x clawbridge
             sudo mv clawbridge /usr/local/bin/
             ```
 
             **Linux x64:**
             ```bash
-            curl -L https://github.com/moltlife/clawbridge-cli/releases/download/${{ steps.version.outputs.version }}/clawbridge-linux-x64 -o clawbridge
+            curl -L https://github.com/moltlife/clawbridge-runner/releases/download/${{ steps.version.outputs.version }}/clawbridge-linux-x64 -o clawbridge
             chmod +x clawbridge
             sudo mv clawbridge /usr/local/bin/
             ```
 
             **Linux ARM64:**
             ```bash
-            curl -L https://github.com/moltlife/clawbridge-cli/releases/download/${{ steps.version.outputs.version }}/clawbridge-linux-arm64 -o clawbridge
+            curl -L https://github.com/moltlife/clawbridge-runner/releases/download/${{ steps.version.outputs.version }}/clawbridge-linux-arm64 -o clawbridge
             chmod +x clawbridge
             sudo mv clawbridge /usr/local/bin/
             ```
@@ -155,13 +103,19 @@ jobs:
             ### Quick Start
 
             ```bash
-            clawbridge link CB-XXXXXX   # Use connect code from clawbridge.cloud
-            clawbridge run               # Run the skill
+            clawbridge link CB-XXXXXX
+            clawbridge run
             ```
 
             ### Checksums
 
             See `checksums.txt` for SHA256 checksums of all binaries.
-          files: binaries/*
+          files: |
+            clawbridge-linux-x64
+            clawbridge-linux-arm64
+            clawbridge-macos-x64
+            clawbridge-macos-arm64
+            clawbridge-win-x64.exe
+            checksums.txt
           draft: false
           prerelease: false
