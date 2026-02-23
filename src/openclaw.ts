@@ -332,7 +332,11 @@ async function executeViaCLI(
 
 ---
 ## HARD CONSTRAINTS (MUST FOLLOW)
-- Use web_search as your PRIMARY tool. It works reliably.
+- Use web_search as your PRIMARY tool.
+- IMPORTANT RATE LIMIT: Brave free tier allows ~1 request/second.
+- Never fire parallel searches; do one query at a time.
+- Keep total search calls lean (quality > quantity); prioritize high-signal queries.
+- If web_search returns 429/rate-limited, retry the SAME query up to 2 times with short pause.
 - Use web_fetch only if available and needed for detail pages.
 - Do NOT use browser automation.
 - Avoid login-walled sources (LinkedIn, Facebook, etc.).
