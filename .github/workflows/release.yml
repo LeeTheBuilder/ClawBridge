@@ -13,9 +13,28 @@ on:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            binary_name: clawbridge-linux-x64
+          - os: ubuntu-latest
+            target: linux-arm64
+            binary_name: clawbridge-linux-arm64
+          - os: macos-latest
+            target: macos-x64
+            binary_name: clawbridge-macos-x64
+          - os: macos-latest
+            target: macos-arm64
+            binary_name: clawbridge-macos-arm64
+          - os: windows-latest
+            target: win-x64
+            binary_name: clawbridge-win-x64.exe
 
     steps:
       - uses: actions/checkout@v4
@@ -37,6 +56,7 @@ jobs:
 
       - name: Get version
         id: version
+        shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
@@ -44,19 +64,10 @@ jobs:
             echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Build all binaries (single runner, no artifact storage)
-        run: |
-          pkg . --target node20-linux-x64 --output clawbridge-linux-x64
-          pkg . --target node20-linux-arm64 --output clawbridge-linux-arm64
-          pkg . --target node20-macos-x64 --output clawbridge-macos-x64
-          pkg . --target node20-macos-arm64 --output clawbridge-macos-arm64
-          pkg . --target node20-win-x64 --output clawbridge-win-x64.exe
+      - name: Package binary
+        run: pkg . --target node20-${{ matrix.target }} --output ${{ matrix.binary_name }}
 
-      - name: Create checksums
-        run: |
-          sha256sum clawbridge-* > checksums.txt
-
-      - name: Create GitHub release (same repo)
+      - name: Create or update release with binary
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.version.outputs.version }}
@@ -65,57 +76,17 @@ jobs:
             ## Clawbridge Runner ${{ steps.version.outputs.version }}
 
             ### Quick Install
-
             ```bash
             curl -fsSL https://clawbridge.cloud/install | bash
             ```
 
-            ### Manual Download
-
-            **macOS Apple Silicon:**
-            ```bash
-            curl -L https://github.com/LeeTheBuilder/ClawBridge/releases/download/${{ steps.version.outputs.version }}/clawbridge-macos-arm64 -o clawbridge
-            chmod +x clawbridge
-            sudo mv clawbridge /usr/local/bin/
-            ```
-
-            **macOS Intel:**
-            ```bash
-            curl -L https://github.com/LeeTheBuilder/ClawBridge/releases/download/${{ steps.version.outputs.version }}/clawbridge-macos-x64 -o clawbridge
-            chmod +x clawbridge
-            sudo mv clawbridge /usr/local/bin/
-            ```
-
-            **Linux x64:**
-            ```bash
-            curl -L https://github.com/LeeTheBuilder/ClawBridge/releases/download/${{ steps.version.outputs.version }}/clawbridge-linux-x64 -o clawbridge
-            chmod +x clawbridge
-            sudo mv clawbridge /usr/local/bin/
-            ```
-
-            **Linux ARM64:**
-            ```bash
-            curl -L https://github.com/LeeTheBuilder/ClawBridge/releases/download/${{ steps.version.outputs.version }}/clawbridge-linux-arm64 -o clawbridge
-            chmod +x clawbridge
-            sudo mv clawbridge /usr/local/bin/
-            ```
-
             ### Quick Start
-
             ```bash
             clawbridge link CB-XXXXXX
             clawbridge run
             ```
-
-            ### Checksums
-
-            See `checksums.txt` for SHA256 checksums of all binaries.
-          files: |
-            clawbridge-linux-x64
-            clawbridge-linux-arm64
-            clawbridge-macos-x64
-            clawbridge-macos-arm64
-            clawbridge-win-x64.exe
-            checksums.txt
+          files: ${{ matrix.binary_name }}
+          append_body: false
           draft: false
           prerelease: false
+          generate_release_notes: false

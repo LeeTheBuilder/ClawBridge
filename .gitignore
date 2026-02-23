@@ -34,3 +34,6 @@ coverage/
 # Temp
 tmp/
 temp/
+
+# Local backup artifacts
+*.backup.*
