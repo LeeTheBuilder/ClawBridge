@@ -51,42 +51,15 @@ run_budget:
   max_minutes: 10
 
 # Required: Delivery configuration
+# Vault is the only output channel in current architecture.
 delivery:
-  # Options: discord, slack, email
-  target: "discord"
-  
-  # Discord configuration
-  discord:
-    # Option 1: Webhook URL (recommended, simpler)
-    # Set DISCORD_WEBHOOK_URL environment variable instead of putting it here
-    # webhook_url: "https://discord.com/api/webhooks/..."
-    
-    # Option 2: Bot token + channel
-    # Set DISCORD_BOT_TOKEN environment variable
-    channel_id: "YOUR_DISCORD_CHANNEL_ID"
-  
-  # Slack configuration (if target: slack)
-  # slack:
-  #   webhook_url: ""  # Set SLACK_WEBHOOK_URL env var
-  #   # OR
-  #   bot_token: ""    # Set SLACK_BOT_TOKEN env var
-  #   channel: "#clawbridge-alerts"
-  
-  # Email configuration (if target: email)
-  # email:
-  #   smtp_host: "smtp.gmail.com"
-  #   smtp_port: 587
-  #   smtp_user: "your@gmail.com"
-  #   smtp_pass: ""  # Set SMTP_PASSWORD env var
-  #   from: "Clawbridge <noreply@yourdomain.com>"
-  #   to:
-  #     - "team@example.com"
+  target: "none"
 
 # Optional: Vault integration (upload runs to clawbridge.cloud)
 vault:
-  enabled: false
-  api_url: "https://clawbridge.cloud/api"
-  # workspace_token is read from CLAWBRIDGE_WORKSPACE_TOKEN env var
+  enabled: true
+  api_url: "https://clawbridge.cloud"
+  # workspace key is read from CLAWBRIDGE_WORKSPACE_KEY env var
 
 # Optional: Output settings
 output:
